@@ -1,11 +1,11 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: './', // <--- This forces relative paths and works on all servers
-  root: '.',
-  publicDir: 'public',
+  base: "./", // <--- This forces relative paths and works on all servers
+  root: ".",
+  publicDir: "public",
   build: {
-    outDir: 'dist',
+    outDir: "dist",
     sourcemap: true,
   },
   server: {

@@ -5,6 +5,7 @@ import {
   normalizeAnimeStatus,
   resolveStudioName,
   fetchLiveWeeklySchedule,
+  searchAnimeFromJikan,
   getLocalProgress,
   setLocalProgress,
   getNextAiringTimestamp,
@@ -13,6 +14,8 @@ import {
   escapeHtml,
 } from "./api";
 import { DAYS_OF_WEEK } from "./constants";
+
+const GUEST_WATCHLIST_KEY = "guest_watchlist_data";
 
 let animeWatchlist: any[] = [];
 const activeFilters = {
@@ -63,6 +66,12 @@ function cacheDomElements() {
     modalGenres: document.getElementById("modalGenres"),
     modalTrailerBtn: document.getElementById("modalTrailerBtn"),
     modalMalLink: document.getElementById("modalMalLink"),
+
+    // Guest UI Elements
+    guestSearchArea: document.getElementById("guestSearchArea"),
+    guestSearchInput: document.getElementById("guestSearchInput"),
+    guestSearchBtn: document.getElementById("guestSearchBtn"),
+    searchResultsContainer: document.getElementById("searchResultsContainer"),
   };
 }
 
@@ -103,9 +112,9 @@ function initApp() {
   elements.logoutBtn?.addEventListener("click", () => {
     localStorage.removeItem("mal_username");
     localStorage.removeItem("mal_guest_mode");
-    localStorage.removeItem("local_progress_cache");
 
     elements.dashboardView?.classList.add("hidden");
+    elements.guestSearchArea?.classList.add("hidden");
     elements.loginView?.classList.remove("hidden");
 
     if (activeTimerInterval) clearInterval(activeTimerInterval);
@@ -116,6 +125,7 @@ function initApp() {
     elements.detailsModal?.classList.add("hidden");
   });
 
+  // Safely narrow elements.detailsModal using a local const
   const detailsModal = elements.detailsModal;
   if (detailsModal) {
     detailsModal.addEventListener("click", (e) => {
@@ -134,6 +144,12 @@ function initApp() {
     activeFilters.airingStatus = (e.target as HTMLSelectElement).value;
     renderWatchlist();
   });
+
+  // Wire up Guest Search Handlers
+  elements.guestSearchBtn?.addEventListener("click", executeGuestSearch);
+  elements.guestSearchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") executeGuestSearch();
+  });
 }
 
 function showLoading(text: string) {
@@ -145,6 +161,61 @@ function showLoading(text: string) {
 
 function hideLoading() {
   elements.loadingOverlay?.classList.add("hidden");
+}
+
+async function executeGuestSearch() {
+  const queryInput = elements.guestSearchInput as HTMLInputElement | null;
+  const container = elements.searchResultsContainer;
+  if (!queryInput || !container) return;
+
+  const query = queryInput.value.trim();
+  if (!query) return;
+
+  showLoading(`Searching Database for "${query}"...`);
+  try {
+    const results = await searchAnimeFromJikan(query);
+    container.innerHTML = "";
+
+    if (results.length === 0) {
+      container.innerHTML = `<div class="col-span-2 text-center text-slate-500 text-xs py-4">No matching results found</div>`;
+    } else {
+      results.forEach((show) => {
+        const row = document.createElement("div");
+        row.className =
+          "flex items-center justify-between p-3 bg-slate-900 border border-darkBorder rounded-xl gap-3";
+
+        const showTitle = show.title_english || show.title;
+        const poster =
+          show.images?.webp?.small_image_url ||
+          show.images?.webp?.image_url ||
+          "";
+
+        // Escape titles and studios ABOVE the template string to prevent compiler parsing bugs
+        const escapedTitle = escapeHtml(show.title).replace(/'/g, "\\'");
+        const escapedStudio = escapeHtml(resolveStudioName(show)).replace(
+          /'/g,
+          "\\'",
+        );
+
+        row.innerHTML = `
+                    <div class="flex items-center gap-3 min-w-0">
+                        <img src="${escapeHtml(poster)}" class="w-8 h-11 object-cover rounded" alt="Cover">
+                        <div class="min-w-0">
+                            <div class="text-xs font-bold text-white truncate leading-snug">${escapeHtml(showTitle)}</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(show.type || "Show")} · ${show.episodes || "Unknown"} ep</div>
+                        </div>
+                    </div>
+                    <button onclick="addSearchedAnime(${show.mal_id}, '${escapedTitle}', '${escapeHtml(poster)}', ${show.episodes || 0}, '${escapeHtml(show.status)}', '${escapedStudio}')" class="bg-brand-500 hover:bg-brand-600 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all flex-shrink-0 text-white">Add</button>
+                `;
+        container.appendChild(row);
+      });
+    }
+    container.classList.remove("hidden");
+  } catch (e: any) {
+    alert(`Search Error: ${e.message}`);
+  } finally {
+    hideLoading();
+  }
 }
 
 async function loadUserProfileAndWatchlist(username: string) {
@@ -247,6 +318,7 @@ async function loadUserProfileAndWatchlist(username: string) {
     });
 
     elements.loginView?.classList.add("hidden");
+    elements.guestSearchArea?.classList.add("hidden"); // Hide guest search on real sync
     elements.dashboardView?.classList.remove("hidden");
 
     renderWatchlist();
@@ -259,10 +331,16 @@ async function loadUserProfileAndWatchlist(username: string) {
 }
 
 async function loadGuestDashboard() {
-  showLoading("Loading Live Airing Calendar...");
+  showLoading("Loading Guest Watchlist...");
   try {
-    const watchlist = await fetchLiveWeeklySchedule();
-    animeWatchlist = watchlist;
+    const savedList = localStorage.getItem(GUEST_WATCHLIST_KEY);
+    if (savedList) {
+      animeWatchlist = JSON.parse(savedList);
+    } else {
+      const rawSchedule = await fetchLiveWeeklySchedule();
+      animeWatchlist = rawSchedule.slice(0, 4);
+      localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+    }
 
     renderUserHeader({
       username: "Guest Watcher",
@@ -270,6 +348,7 @@ async function loadGuestDashboard() {
       watchingCount: animeWatchlist.length,
     });
 
+    elements.guestSearchArea?.classList.remove("hidden");
     elements.loginView?.classList.add("hidden");
     elements.dashboardView?.classList.remove("hidden");
 
@@ -455,6 +534,8 @@ function renderWatchlist() {
   elements.watchlistEmptyState?.classList.add("hidden");
   animeGrid.innerHTML = "";
 
+  const isGuestMode = localStorage.getItem("mal_guest_mode") === "true";
+
   filteredList.forEach((anime) => {
     const card = document.createElement("div");
     card.className =
@@ -465,7 +546,6 @@ function renderWatchlist() {
     const percentage = total > 0 ? Math.min((watched / total) * 100, 100) : 0;
     const behindIndicator = getBehindIndicatorData(anime);
 
-    // Hide date block completely when date data is missing or marked "TBA"
     const hasBroadcast =
       anime.broadcast &&
       anime.broadcast.string &&
@@ -474,10 +554,8 @@ function renderWatchlist() {
       ? `<div class="text-[11px] text-cyan-400 font-bold mt-1.5 flex items-center gap-1">📅 <span>${escapeHtml(anime.broadcast.string)}</span></div>`
       : "";
 
-    // Clean unconfirmed counts (3 / ? ep instead of 3 / ∞ ep)
     const totalText = total > 0 ? `${total} ep` : "? ep";
 
-    // Replaced "Airing Complete" box with Studio/Genres metadata
     let middleBoxHtml = "";
     if (anime.airing && anime.broadcast?.day) {
       middleBoxHtml = `
@@ -511,42 +589,58 @@ function renderWatchlist() {
             `;
     }
 
+    const removeButtonHtml = isGuestMode
+      ? `<button onclick="removeAnime(${anime.mal_id})" class="absolute top-3 right-3 p-2 bg-slate-950/80 hover:bg-rose-600 hover:text-white text-rose-400 rounded-md transition-all z-10" title="Remove from Watchlist">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+               </button>`
+      : "";
+
     card.innerHTML = `
-                    <div class="h-40 relative overflow-hidden bg-slate-950 cursor-pointer" onclick="openAnimeDetails(${anime.mal_id})">
-                        <img src="${escapeHtml(anime.image_url)}" alt="${escapeHtml(anime.title)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
-                        <div class="absolute inset-0 bg-gradient-to-t from-darkCard via-transparent to-transparent"></div>
-                        <div class="absolute top-3 left-3 flex flex-wrap gap-1.5">
-                            <span class="text-[9px] font-black px-2.5 py-1 rounded-md tracking-wider uppercase ${anime.airing ? "bg-emerald-500 text-white" : "bg-slate-700 text-slate-300"}">
-                                ${escapeHtml(anime.airing ? "AIRING" : anime.status)}
-                            </span>
-                            ${
-                              anime.score
-                                ? `
-                                <span class="text-[9px] font-black px-2.5 py-1 rounded-md tracking-wider bg-yellow-500 text-slate-950">
-                                    ⭐ ${anime.score.toFixed(1)}
-                                </span>
-                            `
-                                : ""
-                            }
+            <div class="h-40 relative overflow-hidden bg-slate-950 cursor-pointer">
+                <div onclick="openAnimeDetails(${anime.mal_id})" class="absolute inset-0">
+                    <img src="${escapeHtml(anime.image_url)}" alt="${escapeHtml(anime.title)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                    <div class="absolute inset-0 bg-gradient-to-t from-darkCard via-transparent to-transparent"></div>
+                </div>
+                ${removeButtonHtml}
+                <div class="absolute top-3 left-3 flex flex-wrap gap-1.5 pointer-events-none">
+                    <span class="text-[9px] font-black px-2.5 py-1 rounded-md tracking-wider uppercase ${anime.airing ? "bg-emerald-500 text-white" : "bg-slate-700 text-slate-300"}">
+                        ${escapeHtml(anime.airing ? "AIRING" : anime.status)}
+                    </span>
+                    ${
+                      anime.score
+                        ? `
+                        <span class="text-[9px] font-black px-2.5 py-1 rounded-md tracking-wider bg-yellow-500 text-slate-950">
+                            ⭐ ${anime.score.toFixed(1)}
+                        </span>
+                    `
+                        : ""
+                    }
+                </div>
+            </div>
+            <div class="p-4 flex-1 flex flex-col justify-between">
+                <div>
+                    <h3 onclick="openAnimeDetails(${anime.mal_id})" class="font-extrabold text-sm text-slate-100 line-clamp-1 hover:text-brand-400 cursor-pointer" title="${escapeHtml(anime.title)}">${escapeHtml(anime.title)}</h3>
+                    ${broadcastHtml}
+                    ${middleBoxHtml}
+                </div>
+                <div class="mt-3 border-t border-darkBorder/40 pt-3 space-y-2">
+                    <div class="flex items-center justify-between gap-3 bg-slate-900/40 p-2 rounded-xl border border-darkBorder/40">
+                        <div class="text-xs font-bold text-slate-400 px-1">
+                            Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}
                         </div>
+                        <button onclick="incrementProgress(${anime.mal_id}, ${total})" class="px-3.5 py-1.5 bg-brand-500 hover:bg-brand-600 active:scale-95 text-white rounded-lg font-black text-xs transition-all flex items-center justify-center gap-1 shadow-md shadow-brand-500/10">
+                            <span>+1</span>
+                        </button>
                     </div>
-                    <div class="p-4 flex-1 flex flex-col justify-between">
-                        <div>
-                            <h3 onclick="openAnimeDetails(${anime.mal_id})" class="font-extrabold text-sm text-slate-100 line-clamp-1 hover:text-brand-400 cursor-pointer" title="${escapeHtml(anime.title)}">${escapeHtml(anime.title)}</h3>
-                            ${broadcastHtml}
-                            ${middleBoxHtml}
-                        </div>
-                        <div class="mt-3 border-t border-darkBorder/40 pt-3 space-y-2">
-                            <div class="flex items-center justify-between text-xs font-bold text-slate-400 px-1">
-                                <span>Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}</span>
-                            </div>
-                            <div class="w-full bg-slate-900 rounded-full h-1 border border-darkBorder overflow-hidden">
-                                <div id="progress-bar-${anime.mal_id}" class="bg-gradient-to-r from-brand-500 to-cyan-500 h-1 rounded-full" style="width: ${percentage}%"></div>
-                            </div>
-                            <div id="behind-text-${anime.mal_id}" class="${behindIndicator.className}">${behindIndicator.text}</div>
-                        </div>
+                    <div class="w-full bg-slate-900 rounded-full h-1 border border-darkBorder overflow-hidden">
+                        <div id="progress-bar-${anime.mal_id}" class="bg-gradient-to-r from-brand-500 to-cyan-500 h-1 rounded-full" style="width: ${percentage}%"></div>
                     </div>
-                `;
+                    <div id="behind-text-${anime.mal_id}" class="${behindIndicator.className}">${behindIndicator.text}</div>
+                </div>
+            </div>
+        `;
     animeGrid.appendChild(card);
   });
   updateAllTimers();
@@ -600,6 +694,11 @@ export function incrementProgress(malId: number, totalEpisodes: number) {
   anime.episodes_watched_local = currentWatched;
   setLocalProgress(malId, currentWatched);
 
+  const isGuest = localStorage.getItem("mal_guest_mode") === "true";
+  if (isGuest) {
+    localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+  }
+
   const textEl = document.getElementById(`progress-text-${malId}`);
   const barEl = document.getElementById(`progress-bar-${malId}`);
 
@@ -620,6 +719,82 @@ export function incrementProgress(malId: number, totalEpisodes: number) {
   }
   updateBehindSummary();
   showMiniToast(`Watched ep ${currentWatched}`);
+}
+
+export function addSearchedAnime(
+  malId: number,
+  title: string,
+  posterUrl: string,
+  totalEpisodes: number,
+  status: string,
+  studioName: string,
+) {
+  const alreadyExists = animeWatchlist.some((a) => a.mal_id === malId);
+  if (alreadyExists) {
+    showMiniToast("Anime is already in your watchlist!");
+    return;
+  }
+
+  const mockBroadcast = {
+    day: "Sundays",
+    time: "23:00",
+    timezone: "Asia/Tokyo",
+    string: "Sundays at 23:00 (JST)",
+    sourceString: "Sundays at 23:00 (JST)",
+  };
+
+  const newAnime = {
+    mal_id: malId,
+    title: title,
+    title_english: title,
+    image_url: posterUrl || "https://placehold.co/300x450?text=Poster",
+    airing: status === "Currently Airing" || status === "Airing",
+    status: normalizeAnimeStatus(status, true),
+    episodes_total: totalEpisodes,
+    episodes_watched_mal: 0,
+    episodes_watched_local: 0,
+    score: 0,
+    broadcast: mockBroadcast,
+    synopsis: "No description available. Added via database search.",
+    studio: studioName || "Unknown Studio",
+    trailer_url: "",
+    genres: [],
+    season: "Added",
+    url: `https://myanimelist.net/anime/${malId}`,
+  };
+
+  animeWatchlist.unshift(newAnime);
+  localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+
+  if (elements.guestSearchInput)
+    (elements.guestSearchInput as HTMLInputElement).value = "";
+  if (elements.searchResultsContainer) {
+    elements.searchResultsContainer.innerHTML = "";
+    elements.searchResultsContainer.classList.add("hidden");
+  }
+
+  renderUserHeader({
+    username: "Guest Watcher",
+    avatar: "https://placehold.co/100x100?text=Guest",
+    watchingCount: animeWatchlist.length,
+  });
+
+  renderWatchlist();
+  showMiniToast(`Added "${title}"!`);
+}
+
+export function removeAnime(malId: number) {
+  animeWatchlist = animeWatchlist.filter((a) => a.mal_id !== malId);
+  localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+
+  renderUserHeader({
+    username: "Guest Watcher",
+    avatar: "https://placehold.co/100x100?text=Guest",
+    watchingCount: animeWatchlist.length,
+  });
+
+  renderWatchlist();
+  showMiniToast("Anime removed from watchlist.");
 }
 
 function showMiniToast(message: string) {
@@ -666,6 +841,8 @@ export function openAnimeDetails(malId: number) {
   elements.detailsModal?.classList.remove("hidden");
 }
 
-// Bind methods to window context for raw HTML clicks
+// Bind methods to the window context so inline HTML event click listeners can interact with them.
 (window as any).openAnimeDetails = openAnimeDetails;
 (window as any).incrementProgress = incrementProgress;
+(window as any).addSearchedAnime = addSearchedAnime;
+(window as any).removeAnime = removeAnime;

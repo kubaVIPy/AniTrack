@@ -4,12 +4,12 @@
   "description": "Live MyAnimeList Broadcast Tracker with countdown timers, weekly calendar, and multi-API fallback",
   "type": "module",
   "scripts": {
-      "dev": "vite",
-      "build": "tsc && vite build",
-      "preview": "vite preview",
-      "predeploy": "npm run build",
-      "deploy": "gh-pages -d dist"
-    },
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
+  },
   "devDependencies": {
     "gh-pages": "^6.3.0",
     "typescript": "^5.5.4",

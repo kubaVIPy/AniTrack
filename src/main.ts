@@ -5,7 +5,7 @@ import {
   normalizeAnimeStatus,
   resolveStudioName,
   fetchLiveWeeklySchedule,
-  searchAnimeFromJikan,
+  searchAnimeFromAniList,
   getLocalProgress,
   setLocalProgress,
   getNextAiringTimestamp,
@@ -18,6 +18,8 @@ import { DAYS_OF_WEEK } from "./constants";
 const GUEST_WATCHLIST_KEY = "guest_watchlist_data";
 
 let animeWatchlist: any[] = [];
+let currentSearchResults: any[] = [];
+
 const activeFilters = {
   sort: "countdown",
   airingStatus: "all",
@@ -125,7 +127,7 @@ function initApp() {
     elements.detailsModal?.classList.add("hidden");
   });
 
-  // Safely narrow elements.detailsModal using a local const
+  // Safely narrow elements.detailsModal using local const
   const detailsModal = elements.detailsModal;
   if (detailsModal) {
     detailsModal.addEventListener("click", (e) => {
@@ -171,15 +173,16 @@ async function executeGuestSearch() {
   const query = queryInput.value.trim();
   if (!query) return;
 
-  showLoading(`Searching Database for "${query}"...`);
+  showLoading(`Searching AniList for "${query}"...`);
   try {
-    const results = await searchAnimeFromJikan(query);
+    const results = await searchAnimeFromAniList(query);
+    currentSearchResults = results;
     container.innerHTML = "";
 
     if (results.length === 0) {
       container.innerHTML = `<div class="col-span-2 text-center text-slate-500 text-xs py-4">No matching results found</div>`;
     } else {
-      results.forEach((show) => {
+      results.forEach((show, index) => {
         const row = document.createElement("div");
         row.className =
           "flex items-center justify-between p-3 bg-slate-900 border border-darkBorder rounded-xl gap-3";
@@ -190,7 +193,6 @@ async function executeGuestSearch() {
           show.images?.webp?.image_url ||
           "";
 
-        // Escape titles and studios ABOVE the template string to prevent compiler parsing bugs
         const escapedTitle = escapeHtml(show.title).replace(/'/g, "\\'");
         const escapedStudio = escapeHtml(resolveStudioName(show)).replace(
           /'/g,
@@ -199,13 +201,13 @@ async function executeGuestSearch() {
 
         row.innerHTML = `
                     <div class="flex items-center gap-3 min-w-0">
-                        <img src="${escapeHtml(poster)}" class="w-8 h-11 object-cover rounded" alt="Cover">
+                        <img src="${escapeHtml(poster)}" class="w-8 h-11 object-cover rounded pointer-events-none" alt="Cover">
                         <div class="min-w-0">
                             <div class="text-xs font-bold text-white truncate leading-snug">${escapeHtml(showTitle)}</div>
-                            <div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(show.type || "Show")} · ${show.episodes || "Unknown"} ep</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(show.status)} · ${show.episodes || "Unknown"} ep</div>
                         </div>
                     </div>
-                    <button onclick="addSearchedAnime(${show.mal_id}, '${escapedTitle}', '${escapeHtml(poster)}', ${show.episodes || 0}, '${escapeHtml(show.status)}', '${escapedStudio}')" class="bg-brand-500 hover:bg-brand-600 px-3 py-1.5 rounded-lg text-[10px] font-black transition-all flex-shrink-0 text-white">Add</button>
+                    <button onclick="addSearchedAnimeByIndex(${index})" class="bg-brand-500 hover:bg-brand-600 px-3.5 py-1.5 rounded-lg text-[10px] font-black transition-all flex-shrink-0 text-white">Add</button>
                 `;
         container.appendChild(row);
       });
@@ -318,7 +320,7 @@ async function loadUserProfileAndWatchlist(username: string) {
     });
 
     elements.loginView?.classList.add("hidden");
-    elements.guestSearchArea?.classList.add("hidden"); // Hide guest search on real sync
+    elements.guestSearchArea?.classList.add("hidden");
     elements.dashboardView?.classList.remove("hidden");
 
     renderWatchlist();
@@ -425,6 +427,36 @@ function updateBehindSummary(list = animeWatchlist) {
   elements.totalBehindCount.textContent = `Behind by ${totalBehind} episode${totalBehind === 1 ? "" : "s"}`;
 }
 
+function updateGuestStats() {
+  const statsBar = document.getElementById("guestStatsBar");
+  if (!statsBar) return;
+
+  const isGuest = localStorage.getItem("mal_guest_mode") === "true";
+  if (!isGuest) {
+    statsBar.classList.add("hidden");
+    return;
+  }
+
+  statsBar.classList.remove("hidden");
+
+  const trackedEl = document.getElementById("statTrackedCount");
+  const watchedEl = document.getElementById("statWatchedCount");
+  const completedEl = document.getElementById("statCompletedCount");
+
+  if (trackedEl) trackedEl.textContent = String(animeWatchlist.length);
+
+  const totalWatched = animeWatchlist.reduce(
+    (sum, a) => sum + (a.episodes_watched_local || 0),
+    0,
+  );
+  if (watchedEl) watchedEl.textContent = String(totalWatched);
+
+  const completedCount = animeWatchlist.filter((a) => {
+    return a.episodes_total > 0 && a.episodes_watched_local >= a.episodes_total;
+  }).length;
+  if (completedEl) completedEl.textContent = String(completedCount);
+}
+
 function renderCalendar() {
   const calendarGrid = elements.calendarDaysGrid;
   if (!calendarGrid) return;
@@ -485,6 +517,7 @@ function renderCalendar() {
 
 function renderWatchlist() {
   renderCalendar();
+  updateGuestStats();
 
   const animeGrid = elements.animeGrid;
   if (!animeGrid) return;
@@ -571,7 +604,7 @@ function renderWatchlist() {
               .slice(0, 2)
               .map(
                 (g: any) =>
-                  `<span class="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md font-semibold">${escapeHtml(g.name)}</span>`,
+                  `<span class="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md font-semibold">${escapeHtml(g.name || g)}</span>`,
               )
               .join("")}</div>`
           : "";
@@ -596,6 +629,32 @@ function renderWatchlist() {
                 </svg>
                </button>`
       : "";
+
+    // CONDITIONAL CONTROLS LAYOUT: Interactive only for Guest Mode, plain text for MAL Sync
+    let progressControlsHtml = "";
+    if (isGuestMode) {
+      progressControlsHtml = `
+                <div class="flex items-center justify-between gap-2 bg-slate-900/40 p-2 rounded-xl border border-darkBorder/40">
+                    <div class="text-xs font-bold text-slate-400 px-1">
+                        Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}
+                    </div>
+                    <div class="flex gap-1.5">
+                        <button onclick="decrementProgress(${anime.mal_id}, ${total})" class="w-8 h-8 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 rounded-lg font-black text-xs transition-all flex items-center justify-center shadow-md" title="Decrease Progress">
+                            <span>-1</span>
+                        </button>
+                        <button onclick="incrementProgress(${anime.mal_id}, ${total})" class="w-8 h-8 bg-brand-500 hover:bg-brand-600 active:scale-95 text-white rounded-lg font-black text-xs transition-all flex items-center justify-center shadow-md shadow-brand-500/10" title="Increase Progress">
+                            <span>+1</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+    } else {
+      progressControlsHtml = `
+                <div class="flex items-center justify-between text-xs font-bold text-slate-400 px-1">
+                    <span>Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}</span>
+                </div>
+            `;
+    }
 
     card.innerHTML = `
             <div class="h-40 relative overflow-hidden bg-slate-950 cursor-pointer">
@@ -626,14 +685,7 @@ function renderWatchlist() {
                     ${middleBoxHtml}
                 </div>
                 <div class="mt-3 border-t border-darkBorder/40 pt-3 space-y-2">
-                    <div class="flex items-center justify-between gap-3 bg-slate-900/40 p-2 rounded-xl border border-darkBorder/40">
-                        <div class="text-xs font-bold text-slate-400 px-1">
-                            Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}
-                        </div>
-                        <button onclick="incrementProgress(${anime.mal_id}, ${total})" class="px-3.5 py-1.5 bg-brand-500 hover:bg-brand-600 active:scale-95 text-white rounded-lg font-black text-xs transition-all flex items-center justify-center gap-1 shadow-md shadow-brand-500/10">
-                            <span>+1</span>
-                        </button>
-                    </div>
+                    ${progressControlsHtml}
                     <div class="w-full bg-slate-900 rounded-full h-1 border border-darkBorder overflow-hidden">
                         <div id="progress-bar-${anime.mal_id}" class="bg-gradient-to-r from-brand-500 to-cyan-500 h-1 rounded-full" style="width: ${percentage}%"></div>
                     </div>
@@ -718,49 +770,87 @@ export function incrementProgress(malId: number, totalEpisodes: number) {
     indicatorEl.textContent = indicator.text;
   }
   updateBehindSummary();
+  updateGuestStats();
   showMiniToast(`Watched ep ${currentWatched}`);
 }
 
-export function addSearchedAnime(
-  malId: number,
-  title: string,
-  posterUrl: string,
-  totalEpisodes: number,
-  status: string,
-  studioName: string,
-) {
-  const alreadyExists = animeWatchlist.some((a) => a.mal_id === malId);
+export function decrementProgress(malId: number, totalEpisodes: number) {
+  const anime = animeWatchlist.find((a) => a.mal_id === malId);
+  if (!anime) return;
+
+  let currentWatched = getLocalProgress(malId, anime.episodes_watched_mal);
+  currentWatched -= 1;
+
+  if (currentWatched < 0) {
+    currentWatched = 0;
+  }
+
+  anime.episodes_watched_local = currentWatched;
+  setLocalProgress(malId, currentWatched);
+
+  const isGuest = localStorage.getItem("mal_guest_mode") === "true";
+  if (isGuest) {
+    localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+  }
+
+  const textEl = document.getElementById(`progress-text-${malId}`);
+  const barEl = document.getElementById(`progress-bar-${malId}`);
+
+  if (textEl) textEl.textContent = String(currentWatched);
+  if (barEl) {
+    const percentage =
+      totalEpisodes > 0
+        ? Math.min((currentWatched / totalEpisodes) * 100, 100)
+        : 0;
+    barEl.style.width = `${percentage}%`;
+  }
+
+  const indicatorEl = document.getElementById(`behind-text-${malId}`);
+  if (indicatorEl) {
+    const indicator = getBehindIndicatorData(anime);
+    indicatorEl.className = indicator.className;
+    indicatorEl.textContent = indicator.text;
+  }
+  updateBehindSummary();
+  updateGuestStats();
+  showMiniToast(`Watched ep ${currentWatched}`);
+}
+
+export function addSearchedAnimeByIndex(index: number) {
+  const show = currentSearchResults[index];
+  if (!show) return;
+
+  const alreadyExists = animeWatchlist.some((a) => a.mal_id === show.mal_id);
   if (alreadyExists) {
     showMiniToast("Anime is already in your watchlist!");
     return;
   }
 
-  const mockBroadcast = {
-    day: "Sundays",
-    time: "23:00",
-    timezone: "Asia/Tokyo",
-    string: "Sundays at 23:00 (JST)",
-    sourceString: "Sundays at 23:00 (JST)",
-  };
-
   const newAnime = {
-    mal_id: malId,
-    title: title,
-    title_english: title,
-    image_url: posterUrl || "https://placehold.co/300x450?text=Poster",
-    airing: status === "Currently Airing" || status === "Airing",
-    status: normalizeAnimeStatus(status, true),
-    episodes_total: totalEpisodes,
+    mal_id: show.mal_id,
+    title: show.title,
+    title_english: show.title,
+    image_url:
+      show.images?.webp?.large_image_url ||
+      show.images?.webp?.image_url ||
+      "https://placehold.co/300x450?text=Poster",
+    airing: show.status === "RELEASING" || show.status === "Airing",
+    status: normalizeAnimeStatus(show.status, true),
+    episodes_total: show.episodes || 0,
     episodes_watched_mal: 0,
     episodes_watched_local: 0,
-    score: 0,
-    broadcast: mockBroadcast,
-    synopsis: "No description available. Added via database search.",
-    studio: studioName || "Unknown Studio",
-    trailer_url: "",
-    genres: [],
-    season: "Added",
-    url: `https://myanimelist.net/anime/${malId}`,
+    score: show.score || 0,
+    broadcast: show.broadcast || null,
+    synopsis: show.synopsis || "No description available.",
+    studio: resolveStudioName(show),
+    trailer_url: show.trailer?.url || "",
+    genres: show.genres || [],
+    season: show.season
+      ? `${show.season.charAt(0).toUpperCase() + show.season.slice(1)} ${show.year || ""}`
+      : "Added",
+    url: show.url || `https://myanimelist.net/anime/${show.mal_id}`,
+    next_airing_episode: show.next_airing_episode || null, // ADDED
+    next_airing_at: show.next_airing_at || null, // ADDED
   };
 
   animeWatchlist.unshift(newAnime);
@@ -780,7 +870,7 @@ export function addSearchedAnime(
   });
 
   renderWatchlist();
-  showMiniToast(`Added "${title}"!`);
+  showMiniToast(`Added "${newAnime.title}"!`);
 }
 
 export function removeAnime(malId: number) {
@@ -818,31 +908,69 @@ export function openAnimeDetails(malId: number) {
   const anime = animeWatchlist.find((a) => a.mal_id === malId);
   if (!anime) return;
 
-  if (elements.modalPoster)
+  if (elements.modalPoster) {
     (elements.modalPoster as HTMLImageElement).src = anime.image_url;
-  if (elements.modalTitle) elements.modalTitle.textContent = anime.title;
-  if (elements.modalTitleEnglish)
+  }
+  if (elements.modalTitle) {
+    elements.modalTitle.textContent = anime.title;
+  }
+  if (elements.modalTitleEnglish) {
     elements.modalTitleEnglish.textContent =
       anime.title_english !== anime.title ? anime.title_english : "";
-  if (elements.modalScore)
+  }
+  if (elements.modalScore) {
     elements.modalScore.textContent = anime.score
       ? anime.score.toFixed(2)
       : "N/A";
-  if (elements.modalBroadcast)
+  }
+  if (elements.modalBroadcast) {
     elements.modalBroadcast.textContent = anime.broadcast?.string || "TBA";
-  if (elements.modalStudio) elements.modalStudio.textContent = anime.studio;
-  if (elements.modalEpisodes)
+  }
+  if (elements.modalStudio) {
+    elements.modalStudio.textContent = anime.studio;
+  }
+  if (elements.modalEpisodes) {
     elements.modalEpisodes.textContent = `${anime.episodes_total || "∞"} episodes`;
-  if (elements.modalSeason) elements.modalSeason.textContent = anime.season;
-  if (elements.modalSynopsis)
+  }
+  if (elements.modalSeason) {
+    elements.modalSeason.textContent = anime.season;
+  }
+  if (elements.modalSynopsis) {
     elements.modalSynopsis.textContent =
       anime.synopsis || "No synopsis available.";
+  }
+
+  if (elements.modalStatusBadge) {
+    elements.modalStatusBadge.textContent = anime.status;
+    if (anime.airing) {
+      elements.modalStatusBadge.className =
+        "inline-block text-[9px] font-black px-2.5 py-1 rounded-full mb-3 bg-emerald-500 text-white";
+    } else {
+      elements.modalStatusBadge.className =
+        "inline-block text-[9px] font-black px-2.5 py-1 rounded-full mb-3 bg-slate-700 text-slate-300";
+    }
+  }
+
+  if (elements.modalGenres) {
+    elements.modalGenres.innerHTML = "";
+    if (anime.genres && anime.genres.length > 0) {
+      anime.genres.forEach((genre: any) => {
+        const span = document.createElement("span");
+        span.className =
+          "text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-lg font-semibold border border-darkBorder";
+        span.textContent = genre.name || genre;
+        elements.modalGenres?.appendChild(span);
+      });
+    } else {
+      elements.modalGenres.innerHTML = `<span class="text-xs text-slate-500">No genres listed</span>`;
+    }
+  }
 
   elements.detailsModal?.classList.remove("hidden");
 }
 
-// Bind methods to the window context so inline HTML event click listeners can interact with them.
 (window as any).openAnimeDetails = openAnimeDetails;
 (window as any).incrementProgress = incrementProgress;
-(window as any).addSearchedAnime = addSearchedAnime;
+(window as any).decrementProgress = decrementProgress;
+(window as any).addSearchedAnimeByIndex = addSearchedAnimeByIndex;
 (window as any).removeAnime = removeAnime;

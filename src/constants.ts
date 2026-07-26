@@ -25,12 +25,14 @@ export const DAY_MAP_JST: Record<string, number> = {
   saturday: 6,
 };
 
+// FIXED: Using hotlink-safe img.anilist.co URLs to guarantee images render flawlessly
 export const FALLBACK_AIRING_ANIME = [
   {
     mal_id: 21,
     title: "One Piece",
     title_english: "One Piece",
-    image_url: "https://cdn.myanimelist.net/images/anime/1244/138851.jpg",
+    image_url:
+      "https://img.anilist.co/media/anime/cover/large/bx21-6vby6uMy0vOk.png",
     airing: true,
     status: "Currently Airing",
     episodes_total: 0,
@@ -56,7 +58,8 @@ export const FALLBACK_AIRING_ANIME = [
     mal_id: 57335,
     title: "Oshi no Ko Season 2",
     title_english: "Oshi no Ko Season 2",
-    image_url: "https://cdn.myanimelist.net/images/anime/1812/143521.jpg",
+    image_url:
+      "https://img.anilist.co/media/anime/cover/large/bx166531-h0Q5vBclK9z7.png",
     airing: true,
     status: "Currently Airing",
     episodes_total: 13,

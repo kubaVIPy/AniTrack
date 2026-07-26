@@ -24,6 +24,46 @@ query ($idMal: Int) {
 }
 `;
 
+// FIXED: Added nextAiringEpisode query parameters to calculate dynamic local countdowns
+const ANILIST_SEARCH_QUERY = `
+query ($search: String) {
+    Page(perPage: 6) {
+        media(search: $search, type: ANIME) {
+            id
+            idMal
+            title {
+                romaji
+                english
+                native
+            }
+            status
+            episodes
+            coverImage {
+                large
+            }
+            genres
+            season
+            seasonYear
+            studios {
+                nodes {
+                    name
+                }
+            }
+            siteUrl
+            description
+            trailer {
+                id
+                site
+            }
+            nextAiringEpisode {
+                airingAt
+                episode
+            }
+        }
+    }
+}
+`;
+
 export async function fetchWithRetry(
   url: string,
   options: {
@@ -544,17 +584,61 @@ export function mapJikanShowsToWatchlist(rawShows: any[]): any[] {
   });
 }
 
-// Complete MAL Database Search Integration
-export async function searchAnimeFromJikan(query: string): Promise<any[]> {
-  const encodedQuery = encodeURIComponent(query);
-  const res = await fetchWithRetry(
-    `https://api.jikan.moe/v4/anime?q=${encodedQuery}&limit=6`,
+// FIXED: Maps nextAiringEpisode from the Graphql payload to construct exact broadcast countdowns
+export async function searchAnimeFromAniList(query: string): Promise<any[]> {
+  const response = await fetchGraphqlWithRetry(
+    "https://graphql.anilist.co",
+    {
+      query: ANILIST_SEARCH_QUERY,
+      variables: { search: query },
+    },
+    { retries: 2, retryDelayMs: 1000 },
   );
-  if (!res.ok) {
-    throw new Error(`Search failed with status ${res.status}`);
+
+  if (!response.ok) {
+    throw new Error(`AniList Search failed with status ${response.status}`);
   }
-  const json = await res.json();
-  return json.data || [];
+
+  const json = await response.json();
+  const results = json.data?.Page?.media || [];
+
+  return results.map((item: any) => {
+    // Dynamic countdown data extraction
+    const airingEpisode = item.nextAiringEpisode || null;
+    const broadcast = airingEpisode
+      ? buildBroadcastFromAiringAt(airingEpisode.airingAt)
+      : null;
+
+    return {
+      mal_id: item.idMal,
+      title: item.title.english || item.title.romaji || item.title.native,
+      title_english: item.title.english || item.title.romaji,
+      images: {
+        webp: {
+          large_image_url: item.coverImage.large,
+          image_url: item.coverImage.large,
+        },
+      },
+      status: item.status,
+      episodes: item.episodes,
+      score: 0,
+      broadcast: broadcast, // FIXED: dynamically mapped
+      next_airing_episode: airingEpisode?.episode || null, // FIXED: mapped
+      next_airing_at: airingEpisode?.airingAt || null, // FIXED: mapped
+      synopsis: item.description,
+      studios: item.studios?.nodes,
+      trailer: {
+        url:
+          item.trailer?.site === "youtube"
+            ? `https://www.youtube.com/watch?v=${item.trailer.id}`
+            : "",
+      },
+      genres: item.genres?.map((g: string) => ({ name: g })) || [],
+      season: item.season,
+      year: item.seasonYear,
+      url: item.siteUrl,
+    };
+  });
 }
 
 export function getLocalProgress(malId: number, fallbackVal: number): number {

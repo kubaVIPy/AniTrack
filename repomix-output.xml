@@ -1,0 +1,2349 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/
+  api.ts
+  constants.ts
+  main.ts
+.gitignore
+index.html
+package.json
+README.md
+styles.css
+tsconfig.json
+vite.config.ts
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".gitignore">
+node_modules/
+dist/
+</file>
+
+<file path="README.md">
+sup, visit my site:
+https://kubavipy.github.io/Anime-release-date-tracking-site-/
+</file>
+
+<file path="styles.css">
+@import "https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css";
+
+body {
+    font-family: "Inter", sans-serif;
+    background-color: #0b0f19;
+    color: #f1f5f9;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #1f2937;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #8b5cf6;
+}
+
+.gradient-text {
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+}
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "baseUrl": ".",
+  },
+  "include": ["src/**/*.ts", "vite.config.ts"],
+}
+</file>
+
+<file path="src/api.ts">
+import { DAY_MAP_JST, FALLBACK_AIRING_ANIME } from "./constants";
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const ANILIST_MEDIA_QUERY = `
+query ($idMal: Int) {
+    Media(idMal: $idMal, type: ANIME) {
+        id
+        idMal
+        status
+        episodes
+        nextAiringEpisode {
+            airingAt
+            episode
+            timeUntilAiring
+        }
+        title {
+            romaji
+            english
+            native
+        }
+        siteUrl
+    }
+}
+`;
+
+// FIXED: Added nextAiringEpisode query parameters to calculate dynamic local countdowns
+const ANILIST_SEARCH_QUERY = `
+query ($search: String) {
+    Page(perPage: 6) {
+        media(search: $search, type: ANIME) {
+            id
+            idMal
+            title {
+                romaji
+                english
+                native
+            }
+            status
+            episodes
+            coverImage {
+                large
+            }
+            genres
+            season
+            seasonYear
+            studios {
+                nodes {
+                    name
+                }
+            }
+            siteUrl
+            description
+            trailer {
+                id
+                site
+            }
+            nextAiringEpisode {
+                airingAt
+                episode
+            }
+        }
+    }
+}
+`;
+
+export async function fetchWithRetry(
+  url: string,
+  options: {
+    retries?: number;
+    retryDelayMs?: number;
+    retryStatuses?: number[];
+  } = {},
+): Promise<Response> {
+  const {
+    retries = 3,
+    retryDelayMs = 1200,
+    retryStatuses = [429, 503, 504],
+  } = options;
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url);
+      if (response.ok || !retryStatuses.includes(response.status)) {
+        return response;
+      }
+      lastResponse = response;
+      if (attempt < retries) {
+        await delay(retryDelayMs * attempt);
+      }
+    } catch (error) {
+      if (attempt >= retries) throw error;
+      await delay(retryDelayMs * attempt);
+    }
+  }
+  if (!lastResponse) throw new Error("Fetch failed completely");
+  return lastResponse;
+}
+
+export async function fetchGraphqlWithRetry(
+  url: string,
+  body: any,
+  options: {
+    retries?: number;
+    retryDelayMs?: number;
+    retryStatuses?: number[];
+  } = {},
+): Promise<Response> {
+  const {
+    retries = 3,
+    retryDelayMs = 1200,
+    retryStatuses = [429, 503, 504],
+  } = options;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      if (response.ok || !retryStatuses.includes(response.status)) {
+        return response;
+      }
+      if (attempt < retries) {
+        await delay(retryDelayMs * attempt);
+      }
+    } catch (error) {
+      if (attempt >= retries) throw error;
+      await delay(retryDelayMs * attempt);
+    }
+  }
+  throw new Error("GraphQL fetch failed");
+}
+
+export function escapeHtml(str: string | null | undefined): string {
+  if (str == null) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function resolveStudioName(show: any): string {
+  if (show.studios?.length) {
+    return show.studios.map((s: any) => s.name).join(", ");
+  }
+  if (typeof show.studio === "string" && show.studio) {
+    return show.studio;
+  }
+  return "Unknown Studio";
+}
+
+export function normalizeAnimeStatus(
+  status: string | undefined,
+  fallbackAiring = false,
+): string {
+  if (
+    status === "RELEASING" ||
+    status === "Airing" ||
+    status === "Currently Airing"
+  )
+    return "Currently Airing";
+  if (
+    status === "FINISHED" ||
+    status === "Finished" ||
+    status === "Finished Airing"
+  )
+    return "Finished Airing";
+  if (status === "NOT_YET_RELEASED" || status === "Not yet aired") return "TBA";
+  if (status === "CANCELLED" || status === "Cancelled") return "Cancelled";
+  if (typeof status === "string" && status) return status;
+  return fallbackAiring ? "Currently Airing" : "Finished Airing";
+}
+
+export function buildBroadcastFromAiringAt(airingAt: number) {
+  const airingDate = new Date(airingAt * 1000);
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localDay = airingDate.toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: localTimeZone,
+  });
+  const localTime = airingDate.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: localTimeZone,
+  });
+  const jstDay = airingDate.toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "Asia/Tokyo",
+  });
+  const jstTime = airingDate.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+    timeZone: "Asia/Tokyo",
+  });
+
+  return {
+    airingAt,
+    day: localDay,
+    time: localTime,
+    timezone: localTimeZone,
+    string: `${localDay}s at ${localTime}`,
+    sourceString: `${jstDay}s at ${jstTime} (JST)`,
+    sourceTimezone: "Asia/Tokyo",
+  };
+}
+
+export async function fetchAniListMediaByMalId(malId: number) {
+  const response = await fetchGraphqlWithRetry(
+    "https://graphql.anilist.co",
+    {
+      query: ANILIST_MEDIA_QUERY,
+      variables: { idMal: malId },
+    },
+    { retries: 3, retryDelayMs: 1000 },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `AniList lookup failed (${response.status}) for MAL id ${malId}.`,
+    );
+  }
+
+  const json = await response.json();
+  return json.data?.Media || null;
+}
+
+export async function fetchAniListScheduleMap(malIds: number[]) {
+  const scheduleMap: Record<number, any> = {};
+  const uniqueIds = [...new Set(malIds)].filter(Boolean);
+
+  const mediaList = await Promise.all(
+    uniqueIds.map(async (malId) => {
+      try {
+        return await fetchAniListMediaByMalId(malId);
+      } catch (error) {
+        console.warn(`AniList lookup failed for MAL id ${malId}.`, error);
+        return null;
+      }
+    }),
+  );
+
+  mediaList.forEach((media) => {
+    if (!media) return;
+
+    const airingEpisode = media.nextAiringEpisode || null;
+    scheduleMap[media.idMal] = {
+      mal_id: media.idMal,
+      status: normalizeAnimeStatus(media.status, Boolean(airingEpisode)),
+      airing: media.status === "RELEASING" || Boolean(airingEpisode),
+      broadcast: airingEpisode
+        ? buildBroadcastFromAiringAt(airingEpisode.airingAt)
+        : null,
+      next_airing_episode: airingEpisode?.episode || null,
+      next_airing_at: airingEpisode?.airingAt || null,
+      score: 0,
+      episodes: media.episodes || 0,
+      url: media.siteUrl || `https://anilist.co/anime/${media.id}`,
+      title:
+        media.title?.english ||
+        media.title?.romaji ||
+        media.title?.native ||
+        "",
+    };
+  });
+
+  return scheduleMap;
+}
+
+export function getUtcFromJst(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): number {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return new Date(
+    `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}:00+09:00`,
+  ).getTime();
+}
+
+export function getJstComponents(date: Date = new Date()) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+    hourCycle: "h23",
+  });
+  const parts = dtf.formatToParts(date);
+  const value = (type: string) => {
+    const part = parts.find((p) => p.type === type);
+    return part ? parseInt(part.value, 10) : 0;
+  };
+
+  const weekdayStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    weekday: "long",
+  })
+    .format(date)
+    .toLowerCase();
+
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: value("hour"),
+    minute: value("minute"),
+    dayOfWeek: DAY_MAP_JST[weekdayStr],
+  };
+}
+
+export function getJstOccurrenceUtc(
+  broadcast: any,
+  options: { next?: boolean; ignoreAiringAt?: boolean } = {},
+): number | null {
+  const { next = false, ignoreAiringAt = false } = options;
+
+  if (!ignoreAiringAt && broadcast?.airingAt) {
+    return broadcast.airingAt * 1000;
+  }
+
+  if (!broadcast || !broadcast.day || !broadcast.time) return null;
+
+  const targetDay = DAY_MAP_JST[broadcast.day.toLowerCase()];
+  if (targetDay === undefined) return null;
+
+  const [targetHours, targetMinutes] = broadcast.time.split(":").map(Number);
+  const jst = getJstComponents();
+
+  let daysAhead = targetDay - jst.dayOfWeek;
+  if (daysAhead < 0) daysAhead += 7;
+
+  if (next) {
+    if (daysAhead === 0) {
+      const currentMinutes = jst.hour * 60 + jst.minute;
+      const targetTotalMinutes = targetHours * 60 + targetMinutes;
+      if (currentMinutes >= targetTotalMinutes) {
+        daysAhead = 7;
+      }
+    }
+  }
+
+  const anchorUtc = getUtcFromJst(jst.year, jst.month, jst.day, 0, 0);
+  const targetAnchor = new Date(anchorUtc + daysAhead * 86400000);
+  const targetJst = getJstComponents(targetAnchor);
+
+  return getUtcFromJst(
+    targetJst.year,
+    targetJst.month,
+    targetJst.day,
+    targetHours,
+    targetMinutes,
+  );
+}
+
+export async function fetchUserProfile(username: string) {
+  const encodedUsername = encodeURIComponent(username);
+  const fallbackProfile = {
+    username: username,
+    images: {
+      webp: {
+        image_url: `https://placehold.co/100x100?text=${encodeURIComponent(username.substring(0, 3).toUpperCase())}`,
+      },
+    },
+    statistics: { anime: { watching: 0 } },
+  };
+
+  try {
+    const profileRes = await fetchWithRetry(
+      `https://api.jikan.moe/v4/users/${encodedUsername}`,
+      { retries: 2, retryDelayMs: 1000 },
+    );
+    if (profileRes.ok) {
+      const profileJson = await profileRes.json();
+      if (profileJson && profileJson.data) {
+        return profileJson.data;
+      }
+    }
+  } catch (e) {
+    console.warn("Unable to fetch user profile details:", e);
+  }
+  return fallbackProfile;
+}
+
+export function parseMalWatchingListMarkdown(
+  markdown: string,
+  username: string,
+): any[] {
+  const sectionStart = markdown.indexOf("CURRENTLY WATCHING");
+  if (sectionStart === -1) {
+    throw new Error(
+      "Unable to read the MyAnimeList watching page for this user.",
+    );
+  }
+
+  const sectionEnd = markdown.indexOf(
+    "MyAnimeList.net is a property",
+    sectionStart,
+  );
+  const section = markdown.slice(
+    sectionStart,
+    sectionEnd === -1 ? undefined : sectionEnd,
+  );
+  const rowPattern =
+    /\|\s*\|\s*\d+\s*\|\s*\[!\[Image\s*\d+\]\((https?:\/\/cdn\.myanimelist\.net\/[^)]+)\)\]\((?:https?:\/\/)?myanimelist\.net\/anime\/(\d+)\/[^)]+\)\s*\|\s*\[([^\]]+)\]\((?:https?:\/\/)?myanimelist\.net\/anime\/\2\/[^)]+\)([\s\S]*?)\|\s*\[([\-\d]+)\]\([^)]+\)\s*\|\s*([A-Za-z ]+)\s*\|\s*\[([\-\d]+)\]\([^)]+\)\s*\/\s*([\-\d]+|-)\s*\|/g;
+
+  const listItems = [];
+  for (const match of section.matchAll(rowPattern)) {
+    const imageUrl = match[1];
+    const malId = Number(match[2]);
+    const title = match[3].trim();
+    const titleCell = match[4];
+    const score = match[5] === "-" ? 0 : Number(match[5]);
+    const airing = /\bAiring\b/.test(titleCell);
+    const episodesWatched = match[7] === "-" ? 0 : Number(match[7]);
+    const episodesTotal = match[8] === "-" ? 0 : Number(match[8]);
+
+    listItems.push({
+      anime: {
+        mal_id: malId,
+        title: title,
+        title_english: title,
+        images: { webp: { image_url: imageUrl } },
+        status: airing ? "Currently Airing" : "Finished Airing",
+        episodes: episodesTotal,
+        score: score,
+        url: `https://myanimelist.net/anime/${malId}`,
+      },
+      episodes_watched: episodesWatched,
+      score: score,
+    });
+  }
+
+  if (listItems.length === 0) {
+    throw new Error(
+      `No anime entries were found on the MyAnimeList watching page for ${username}.`,
+    );
+  }
+
+  return listItems;
+}
+
+export async function fetchUserWatchingListFromMalJson(
+  username: string,
+): Promise<any[]> {
+  const encodedUsername = encodeURIComponent(username);
+  const targetUrl = `https://myanimelist.net/animelist/${encodedUsername}/load.json?status=1`;
+  const proxiedUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+  const response = await fetch(proxiedUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch MAL JSON list (${response.status})`);
+  }
+
+  const rawList: any[] = await response.json();
+
+  return rawList.map((item: any) => {
+    let highResPoster =
+      item.anime_image_path || "https://placehold.co/300x450?text=Poster";
+    if (highResPoster.includes("/r/")) {
+      highResPoster = highResPoster.replace(/\/r\/\d+x\d+/, "");
+      highResPoster = highResPoster.split("?")[0];
+    }
+
+    return {
+      anime: {
+        mal_id: item.anime_id,
+        title: item.anime_title,
+        title_english: item.anime_title,
+        images: {
+          webp: {
+            image_url: highResPoster,
+          },
+        },
+        status:
+          item.anime_airing_status === 1
+            ? "Currently Airing"
+            : "Finished Airing",
+        episodes: item.anime_num_episodes,
+        score: item.score || 0,
+        url: `https://myanimelist.net${item.anime_url}`,
+      },
+      episodes_watched: item.num_watched_episodes,
+      score: item.score || 0,
+    };
+  });
+}
+
+export async function fetchUserWatchingListFromJikan(
+  username: string,
+): Promise<any[]> {
+  const encodedUsername = encodeURIComponent(username);
+  const animeListRes = await fetchWithRetry(
+    `https://api.jikan.moe/v4/users/${encodedUsername}/animelist?status=watching&limit=100`,
+    { retries: 3, retryDelayMs: 1500 },
+  );
+  if (!animeListRes.ok) {
+    const err: any = new Error(
+      `MyAnimeList API error (${animeListRes.status})`,
+    );
+    err.code =
+      animeListRes.status === 404 ? "NOT_FOUND" : "TEMPORARY_UNAVAILABLE";
+    throw err;
+  }
+  const animeListJson = await animeListRes.json();
+  return animeListJson.data || [];
+}
+
+export async function fetchUserWatchingList(username: string): Promise<any[]> {
+  try {
+    console.log("Fetching via direct MAL JSON proxy...");
+    return await fetchUserWatchingListFromMalJson(username);
+  } catch (proxyError) {
+    console.warn(
+      "Direct MAL JSON fetch failed, falling back to Jican API...",
+      proxyError,
+    );
+  }
+  return fetchUserWatchingListFromJikan(username);
+}
+
+export async function fetchLiveWeeklySchedule(): Promise<any[]> {
+  try {
+    const scheduleRes = await fetch(
+      `https://api.jikan.moe/v4/schedules?limit=100`,
+    );
+    if (scheduleRes.ok) {
+      const scheduleJson = await scheduleRes.json();
+      const airingShows = scheduleJson.data || [];
+      if (airingShows.length > 0) {
+        return mapJikanShowsToWatchlist(airingShows);
+      }
+    }
+  } catch (err) {
+    console.warn("API Exception. Loading offline backup...", err);
+  }
+  return [...FALLBACK_AIRING_ANIME];
+}
+
+export function mapJikanShowsToWatchlist(rawShows: any[]): any[] {
+  return rawShows.map((show) => {
+    const cachedProgress = getLocalProgress(show.mal_id, 0);
+    return {
+      mal_id: show.mal_id,
+      title: show.title,
+      title_english: show.title_english || show.title,
+      image_url:
+        show.images?.webp?.large_image_url ||
+        show.images?.webp?.image_url ||
+        "https://placehold.co/300x450?text=Poster",
+      airing: show.status === "Currently Airing",
+      status: show.status,
+      episodes_total: show.episodes || 0,
+      episodes_watched_mal: 0,
+      episodes_watched_local: cachedProgress,
+      score: show.score || 0,
+      broadcast: show.broadcast,
+      next_airing_episode: null,
+      next_airing_at: null,
+      synopsis: show.synopsis || "No description available.",
+      studio: resolveStudioName(show),
+      trailer_url: show.trailer?.url || "",
+      genres: show.genres || [],
+      season: show.season
+        ? `${show.season.charAt(0).toUpperCase() + show.season.slice(1)} ${show.year || ""}`
+        : "Airing",
+      url: show.url,
+    };
+  });
+}
+
+// FIXED: Maps nextAiringEpisode from the Graphql payload to construct exact broadcast countdowns
+export async function searchAnimeFromAniList(query: string): Promise<any[]> {
+  const response = await fetchGraphqlWithRetry(
+    "https://graphql.anilist.co",
+    {
+      query: ANILIST_SEARCH_QUERY,
+      variables: { search: query },
+    },
+    { retries: 2, retryDelayMs: 1000 },
+  );
+
+  if (!response.ok) {
+    throw new Error(`AniList Search failed with status ${response.status}`);
+  }
+
+  const json = await response.json();
+  const results = json.data?.Page?.media || [];
+
+  return results.map((item: any) => {
+    // Dynamic countdown data extraction
+    const airingEpisode = item.nextAiringEpisode || null;
+    const broadcast = airingEpisode
+      ? buildBroadcastFromAiringAt(airingEpisode.airingAt)
+      : null;
+
+    return {
+      mal_id: item.idMal,
+      title: item.title.english || item.title.romaji || item.title.native,
+      title_english: item.title.english || item.title.romaji,
+      images: {
+        webp: {
+          large_image_url: item.coverImage.large,
+          image_url: item.coverImage.large,
+        },
+      },
+      status: item.status,
+      episodes: item.episodes,
+      score: 0,
+      broadcast: broadcast, // FIXED: dynamically mapped
+      next_airing_episode: airingEpisode?.episode || null, // FIXED: mapped
+      next_airing_at: airingEpisode?.airingAt || null, // FIXED: mapped
+      synopsis: item.description,
+      studios: item.studios?.nodes,
+      trailer: {
+        url:
+          item.trailer?.site === "youtube"
+            ? `https://www.youtube.com/watch?v=${item.trailer.id}`
+            : "",
+      },
+      genres: item.genres?.map((g: string) => ({ name: g })) || [],
+      season: item.season,
+      year: item.seasonYear,
+      url: item.siteUrl,
+    };
+  });
+}
+
+export function getLocalProgress(malId: number, fallbackVal: number): number {
+  const cacheKey = "local_progress_cache";
+  try {
+    const cache = JSON.parse(localStorage.getItem(cacheKey) || "{}");
+    if (cache[malId] !== undefined) {
+      return cache[malId];
+    }
+  } catch (e) {
+    console.error("Local storage progress retrieval failed:", e);
+  }
+  return fallbackVal;
+}
+
+export function setLocalProgress(malId: number, progressVal: number): void {
+  const cacheKey = "local_progress_cache";
+  try {
+    const cache = JSON.parse(localStorage.getItem(cacheKey) || "{}");
+    cache[malId] = progressVal;
+    localStorage.setItem(cacheKey, JSON.stringify(cache));
+  } catch (e) {
+    console.error("Local storage progress save failed:", e);
+  }
+}
+
+export function getNextAiringTimestamp(broadcast: any): number | null {
+  if (broadcast?.airingAt && broadcast.airingAt * 1000 > Date.now()) {
+    return broadcast.airingAt * 1000;
+  }
+  return getJstOccurrenceUtc(broadcast, { next: true, ignoreAiringAt: true });
+}
+
+export function getLocalAiringDay(broadcast: any): number | null {
+  if (broadcast?.airingAt) {
+    return new Date(broadcast.airingAt * 1000).getDay();
+  }
+  const targetUtcEpoch = getJstOccurrenceUtc(broadcast);
+  if (targetUtcEpoch == null) return null;
+  return new Date(targetUtcEpoch).getDay();
+}
+
+export function getLocalAiringTime(broadcast: any): string {
+  if (broadcast?.airingAt) {
+    return new Date(broadcast.airingAt * 1000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  if (!broadcast || !broadcast.day || !broadcast.time) return "TBA";
+  const targetUtcEpoch = getJstOccurrenceUtc(broadcast);
+  if (targetUtcEpoch == null) return broadcast.time;
+  return new Date(targetUtcEpoch).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+</file>
+
+<file path="src/constants.ts">
+export const DAYS_OF_WEEK = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
+
+export const DAY_MAP_JST: Record<string, number> = {
+  sundays: 0,
+  mondays: 1,
+  tuesdays: 2,
+  wednesdays: 3,
+  thursdays: 4,
+  fridays: 5,
+  saturdays: 6,
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
+// FIXED: Using hotlink-safe img.anilist.co URLs to guarantee images render flawlessly
+export const FALLBACK_AIRING_ANIME = [
+  {
+    mal_id: 21,
+    title: "One Piece",
+    title_english: "One Piece",
+    image_url:
+      "https://img.anilist.co/media/anime/cover/large/bx21-6vby6uMy0vOk.png",
+    airing: true,
+    status: "Currently Airing",
+    episodes_total: 0,
+    episodes_watched_mal: 0,
+    episodes_watched_local: 0,
+    score: 8.72,
+    broadcast: {
+      day: "Sundays",
+      time: "09:30",
+      timezone: "Asia/Tokyo",
+      string: "Sundays at 09:30 (JST)",
+      sourceString: "Sundays at 09:30 (JST)",
+    },
+    synopsis:
+      "Monkey D. Luffy sets out to locate the legendary 'One Piece' treasure and claim the title of King of the Pirates.",
+    studio: "Toei Animation",
+    trailer_url: "https://www.youtube.com/watch?v=l_9824n53I4",
+    genres: [{ name: "Action" }, { name: "Adventure" }, { name: "Fantasy" }],
+    season: "Ongoing",
+    url: "https://myanimelist.net/anime/21/One_Piece",
+  },
+  {
+    mal_id: 57335,
+    title: "Oshi no Ko Season 2",
+    title_english: "Oshi no Ko Season 2",
+    image_url:
+      "https://img.anilist.co/media/anime/cover/large/bx166531-h0Q5vBclK9z7.png",
+    airing: true,
+    status: "Currently Airing",
+    episodes_total: 13,
+    episodes_watched_mal: 0,
+    episodes_watched_local: 0,
+    score: 8.62,
+    broadcast: {
+      day: "Wednesdays",
+      time: "23:00",
+      timezone: "Asia/Tokyo",
+      string: "Wednesdays at 23:00 (JST)",
+      sourceString: "Wednesdays at 23:00 (JST)",
+    },
+    synopsis:
+      "The second season focuses on the Tokyo Blade Stage Play adaptation.",
+    studio: "Doga Kobo",
+    trailer_url: "https://www.youtube.com/watch?v=8p_h9q90b_c",
+    genres: [{ name: "Drama" }, { name: "Supernatural" }],
+    season: "Summer 2026",
+    url: "https://myanimelist.net/anime/57335/Oshi_no_Ko_2nd_Season",
+  },
+];
+</file>
+
+<file path="index.html">
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AniTrack - Live Anime Tracker</title>
+        <link rel="stylesheet" href="./styles.css" />
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                400: "#a78bfa",
+                                500: "#8b5cf6",
+                                600: "#7c3aed",
+                            },
+                            darkCard: "#0f172a",
+                            darkBorder: "#1e293b",
+                            darkBg: "#0b0f19",
+                        },
+                    },
+                },
+            };
+        </script>
+    </head>
+    <body class="bg-darkBg text-slate-100 min-h-screen">
+        <!-- Loading State Overlay -->
+        <div
+            id="loadingOverlay"
+            class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col justify-center items-center z-50 hidden"
+        >
+            <div
+                class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand-500"
+            ></div>
+            <p
+                id="loadingText"
+                class="mt-4 text-xs font-bold text-slate-400 font-semibold"
+            >
+                Loading tracking system...
+            </p>
+        </div>
+
+        <!-- Redesigned Dual-Option Landing Page -->
+        <div
+            id="loginView"
+            class="min-h-screen flex items-center justify-center px-4 py-12 hidden"
+        >
+            <div
+                class="max-w-4xl w-full bg-darkCard border border-darkBorder rounded-3xl p-8 sm:p-12 shadow-2xl relative overflow-hidden"
+            >
+                <div
+                    class="absolute -right-32 -top-32 w-64 h-64 bg-brand-500/10 rounded-full blur-3xl"
+                ></div>
+
+                <div class="text-center max-w-xl mx-auto mb-12">
+                    <h1
+                        class="text-4xl font-black gradient-text bg-gradient-to-r from-brand-400 to-indigo-400 tracking-tight"
+                    >
+                        AniTrack
+                    </h1>
+                    <p class="text-xs text-slate-400 mt-2 font-semibold">
+                        The localized anime broadcast calendar and progress
+                        tracking dashboard.
+                    </p>
+                </div>
+
+                <div
+                    class="grid grid-cols-1 md:grid-cols-2 gap-8 divide-y md:divide-y-0 md:divide-x divide-darkBorder/60"
+                >
+                    <!-- Option 1: Sync MyAnimeList -->
+                    <div
+                        class="pb-8 md:pb-0 md:pr-8 flex flex-col justify-between"
+                    >
+                        <div>
+                            <span
+                                class="text-[9px] uppercase font-black tracking-wider text-brand-400 bg-brand-500/10 px-2.5 py-1 rounded"
+                                >Linked Profile</span
+                            >
+                            <h2 class="text-xl font-extrabold text-white mt-3">
+                                Have a MAL account?
+                            </h2>
+                            <p
+                                class="text-xs text-slate-400 mt-1.5 leading-relaxed font-semibold"
+                            >
+                                Enter your MyAnimeList username to instantly
+                                sync your "Currently Watching" list and generate
+                                your calendar.
+                            </p>
+                        </div>
+                        <form id="malForm" class="mt-6 space-y-3">
+                            <input
+                                id="usernameInput"
+                                type="text"
+                                placeholder="MyAnimeList Username"
+                                class="w-full bg-slate-900 border border-darkBorder text-slate-100 rounded-xl px-4 py-3.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                required
+                            />
+                            <button
+                                type="submit"
+                                class="w-full bg-brand-500 hover:bg-brand-600 text-white py-3.5 rounded-xl font-bold transition-all text-xs"
+                            >
+                                Sync Account
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Option 2: Guest Mode -->
+                    <div
+                        class="pt-8 md:pt-0 md:pl-8 flex flex-col justify-between"
+                    >
+                        <div>
+                            <span
+                                class="text-[9px] uppercase font-black tracking-wider text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded"
+                                >Standalone</span
+                            >
+                            <h2 class="text-xl font-extrabold text-white mt-3">
+                                Don't have one?
+                            </h2>
+                            <p
+                                class="text-xs text-slate-400 mt-1.5 leading-relaxed font-semibold"
+                            >
+                                Use Guest Mode to build, search, and track a
+                                fully custom anime dashboard. All progress saves
+                                locally on your browser.
+                            </p>
+                        </div>
+                        <div class="mt-6">
+                            <button
+                                id="demoBtn"
+                                class="w-full bg-slate-800 hover:bg-slate-700 text-slate-100 py-3.5 rounded-xl font-bold transition-all text-xs border border-darkBorder"
+                            >
+                                Use Guest Mode
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Application Dashboard view -->
+        <div id="dashboardView" class="max-w-7xl mx-auto px-4 py-6 hidden">
+            <header
+                class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-darkBorder pb-6"
+            >
+                <div class="flex items-center gap-3">
+                    <div id="userProfile" class="flex items-center gap-3">
+                        <!-- Dynamic Profile Injection -->
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 w-full sm:w-auto">
+                    <span
+                        id="currentTimeZone"
+                        class="text-xs text-slate-400 font-semibold"
+                    ></span>
+                    <button
+                        id="logoutBtn"
+                        class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl transition-all font-bold ml-auto sm:ml-0"
+                    >
+                        Logout
+                    </button>
+                </div>
+            </header>
+
+            <!-- Guest Search & Add Area (Only visible in Guest Mode) -->
+            <div
+                id="guestSearchArea"
+                class="mt-8 bg-darkCard border border-darkBorder p-5 rounded-2xl hidden"
+            >
+                <h3 class="text-xs font-extrabold text-white">
+                    Search the MAL Database
+                </h3>
+                <p class="text-[11px] text-slate-400 mt-1 font-semibold">
+                    Search any anime from MyAnimeList's complete database to add
+                    countdowns and progress trackers to your guest watchlist.
+                </p>
+                <div class="mt-4 flex gap-3">
+                    <input
+                        id="guestSearchInput"
+                        type="text"
+                        placeholder="Search anime (e.g. Frieren, Chainsaw Man...)"
+                        class="flex-1 bg-slate-900 border border-darkBorder text-slate-100 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <button
+                        id="guestSearchBtn"
+                        class="bg-brand-500 hover:bg-brand-600 text-white px-5 py-2.5 rounded-xl font-bold text-xs transition-all"
+                    >
+                        Search
+                    </button>
+                </div>
+                <div
+                    id="searchResultsContainer"
+                    class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4 hidden"
+                >
+                    <!-- Dynamically loaded search results -->
+                </div>
+            </div>
+
+            <!-- Weekly Calendar Area -->
+            <section class="mt-8">
+                <h2 class="text-lg font-black text-white">
+                    Broadcast Schedule
+                </h2>
+                <div
+                    id="calendarDaysGrid"
+                    class="grid grid-cols-1 md:grid-cols-7 gap-4 mt-4"
+                >
+                    <!-- Days inject here -->
+                </div>
+            </section>
+
+            <!-- Tracking Watchlist Area -->
+            <section class="mt-12">
+                <!-- Guest Statistics Dashboard (Only visible in Guest Mode) -->
+                <div
+                    id="guestStatsBar"
+                    class="grid grid-cols-3 gap-4 mb-6 hidden"
+                >
+                    <div
+                        class="bg-darkCard/40 border border-darkBorder p-4 rounded-2xl text-center"
+                    >
+                        <span
+                            class="text-[9px] text-slate-500 uppercase tracking-wider font-extrabold"
+                            >Tracked Shows</span
+                        >
+                        <div
+                            id="statTrackedCount"
+                            class="text-sm font-black text-white mt-1"
+                        >
+                            0
+                        </div>
+                    </div>
+                    <div
+                        class="bg-darkCard/40 border border-darkBorder p-4 rounded-2xl text-center"
+                    >
+                        <span
+                            class="text-[9px] text-slate-500 uppercase tracking-wider font-extrabold"
+                            >Episodes Watched</span
+                        >
+                        <div
+                            id="statWatchedCount"
+                            class="text-sm font-black text-white mt-1"
+                        >
+                            0
+                        </div>
+                    </div>
+                    <div
+                        class="bg-darkCard/40 border border-darkBorder p-4 rounded-2xl text-center"
+                    >
+                        <span
+                            class="text-[9px] text-slate-500 uppercase tracking-wider font-extrabold"
+                            >Completed Series</span
+                        >
+                        <div
+                            id="statCompletedCount"
+                            class="text-sm font-black text-white mt-1"
+                        >
+                            0
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                >
+                    <div>
+                        <h2 class="text-lg font-black text-white">
+                            My Watching List
+                        </h2>
+                        <p
+                            id="totalBehindCount"
+                            class="text-xs text-slate-400 font-semibold mt-0.5"
+                        >
+                            Behind by 0 episodes
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-3 w-full sm:w-auto">
+                        <select
+                            id="sortSelect"
+                            class="bg-darkCard border border-darkBorder text-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                        >
+                            <option value="countdown">
+                                Sort: Next Episode
+                            </option>
+                            <option value="score">Sort: Score</option>
+                            <option value="title">Sort: Alphabetical</option>
+                            <option value="progress">Sort: Most Behind</option>
+                        </select>
+                        <select
+                            id="airingFilter"
+                            class="bg-darkCard border border-darkBorder text-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
+                        >
+                            <option value="all">Status: All</option>
+                            <option value="airing">Status: Airing</option>
+                            <option value="finished">Status: Completed</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div
+                    id="watchlistEmptyState"
+                    class="hidden flex flex-col items-center justify-center py-20 text-center border border-dashed border-darkBorder rounded-3xl mt-6"
+                >
+                    <h3 class="font-extrabold text-sm text-slate-300">
+                        No matches found
+                    </h3>
+                    <p class="text-xs text-slate-500 max-w-sm mt-1">
+                        Try resetting your filters or search the database to add
+                        shows.
+                    </p>
+                </div>
+
+                <div
+                    id="animeGrid"
+                    class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 mt-6"
+                >
+                    <!-- Cards inject here -->
+                </div>
+                <div
+                    id="totalAnimeCount"
+                    class="text-center text-slate-500 text-[10px] mt-8 font-bold uppercase tracking-wider"
+                ></div>
+            </section>
+        </div>
+
+        <!-- Information Overlay Details Modal -->
+        <div
+            id="detailsModal"
+            class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex justify-center items-center p-4 z-50 hidden"
+        >
+            <div
+                class="bg-darkCard border border-darkBorder rounded-3xl max-w-2xl w-full p-6 relative max-h-[90vh] overflow-y-auto"
+            >
+                <button
+                    id="closeModalBtn"
+                    class="absolute top-4 right-4 text-slate-400 hover:text-white font-bold text-sm"
+                >
+                    ✕
+                </button>
+                <div class="flex flex-col md:flex-row gap-6">
+                    <img
+                        id="modalPoster"
+                        class="w-full md:w-48 h-64 object-cover rounded-2xl border border-darkBorder"
+                        src=""
+                        alt="Poster"
+                    />
+                    <div class="flex-1">
+                        <div
+                            id="modalStatusBadge"
+                            class="inline-block text-[9px] font-black px-2.5 py-1 rounded-full mb-3"
+                        ></div>
+                        <h2
+                            id="modalTitle"
+                            class="text-xl font-extrabold text-white"
+                        ></h2>
+                        <h4
+                            id="modalTitleEnglish"
+                            class="text-xs text-slate-400 mt-1"
+                        ></h4>
+                        <p
+                            id="modalSynopsis"
+                            class="text-xs text-slate-300 mt-4 leading-relaxed line-clamp-4"
+                        ></p>
+                        <div
+                            class="grid grid-cols-2 gap-4 mt-6 text-xs text-slate-400"
+                        >
+                            <div>
+                                <strong class="text-slate-200">Studio:</strong>
+                                <span id="modalStudio"></span>
+                            </div>
+                            <div>
+                                <strong class="text-slate-200"
+                                    >Broadcast:</strong
+                                >
+                                <span id="modalBroadcast"></span>
+                            </div>
+                            <div>
+                                <strong class="text-slate-200"
+                                    >Episodes:</strong
+                                >
+                                <span id="modalEpisodes"></span>
+                            </div>
+                            <div>
+                                <strong class="text-slate-200">Season:</strong>
+                                <span id="modalSeason"></span>
+                            </div>
+                            <div>
+                                <strong class="text-slate-200">Score:</strong>
+                                ⭐ <span id="modalScore"></span>
+                            </div>
+                        </div>
+                        <div
+                            id="modalGenres"
+                            class="flex flex-wrap gap-1.5 mt-6"
+                        ></div>
+                        <div class="mt-6 flex gap-3">
+                            <a
+                                id="modalTrailerBtn"
+                                target="_blank"
+                                class="bg-red-600 hover:bg-red-700 text-white text-xs px-4 py-2.5 rounded-xl font-bold"
+                                >Watch Trailer</a
+                            >
+                            <a
+                                id="modalMalLink"
+                                target="_blank"
+                                class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2.5 rounded-xl font-bold"
+                                >MyAnimeList Page</a
+                            >
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script type="module" src="./src/main.ts"></script>
+    </body>
+</html>
+</file>
+
+<file path="package.json">
+{
+  "name": "anitrack",
+  "version": "1.0.0",
+  "description": "Live MyAnimeList Broadcast Tracker with countdown timers, weekly calendar, and multi-API fallback",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  }
+}
+</file>
+
+<file path="vite.config.ts">
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  base: "./", // <--- This forces relative paths and works on all servers
+  root: ".",
+  publicDir: "public",
+  build: {
+    outDir: "dist",
+    sourcemap: true,
+  },
+  server: {
+    port: 3000,
+    open: true,
+  },
+});
+</file>
+
+<file path="src/main.ts">
+import {
+  fetchUserProfile,
+  fetchUserWatchingList,
+  fetchAniListScheduleMap,
+  normalizeAnimeStatus,
+  resolveStudioName,
+  fetchLiveWeeklySchedule,
+  searchAnimeFromAniList,
+  getLocalProgress,
+  setLocalProgress,
+  getNextAiringTimestamp,
+  getLocalAiringDay,
+  getLocalAiringTime,
+  escapeHtml,
+} from "./api";
+import { DAYS_OF_WEEK } from "./constants";
+
+const GUEST_WATCHLIST_KEY = "guest_watchlist_data";
+
+let animeWatchlist: any[] = [];
+let currentSearchResults: any[] = [];
+
+const activeFilters = {
+  sort: "countdown",
+  airingStatus: "all",
+};
+let activeTimerInterval: ReturnType<typeof setInterval> | null = null;
+let watchlistLoadNotice = "";
+let elements: Record<string, HTMLElement | null> = {};
+
+document.addEventListener("DOMContentLoaded", () => {
+  cacheDomElements();
+  initApp();
+});
+
+function cacheDomElements() {
+  elements = {
+    loginView: document.getElementById("loginView"),
+    dashboardView: document.getElementById("dashboardView"),
+    malForm: document.getElementById("malForm"),
+    usernameInput: document.getElementById("usernameInput"),
+    demoBtn: document.getElementById("demoBtn"),
+    logoutBtn: document.getElementById("logoutBtn"),
+    userProfile: document.getElementById("userProfile"),
+    loadingOverlay: document.getElementById("loadingOverlay"),
+    loadingText: document.getElementById("loadingText"),
+    calendarDaysGrid: document.getElementById("calendarDaysGrid"),
+    animeGrid: document.getElementById("animeGrid"),
+    watchlistEmptyState: document.getElementById("watchlistEmptyState"),
+    totalAnimeCount: document.getElementById("totalAnimeCount"),
+    totalBehindCount: document.getElementById("totalBehindCount"),
+    currentTimeZone: document.getElementById("currentTimeZone"),
+    sortSelect: document.getElementById("sortSelect"),
+    airingFilter: document.getElementById("airingFilter"),
+    detailsModal: document.getElementById("detailsModal"),
+    closeModalBtn: document.getElementById("closeModalBtn"),
+    modalPoster: document.getElementById("modalPoster"),
+    modalStatusBadge: document.getElementById("modalStatusBadge"),
+    modalScoreBadge: document.getElementById("modalScoreBadge"),
+    modalScore: document.getElementById("modalScore"),
+    modalTitle: document.getElementById("modalTitle"),
+    modalTitleEnglish: document.getElementById("modalTitleEnglish"),
+    modalBroadcast: document.getElementById("modalBroadcast"),
+    modalStudio: document.getElementById("modalStudio"),
+    modalEpisodes: document.getElementById("modalEpisodes"),
+    modalSeason: document.getElementById("modalSeason"),
+    modalSynopsis: document.getElementById("modalSynopsis"),
+    modalGenres: document.getElementById("modalGenres"),
+    modalTrailerBtn: document.getElementById("modalTrailerBtn"),
+    modalMalLink: document.getElementById("modalMalLink"),
+
+    // Guest UI Elements
+    guestSearchArea: document.getElementById("guestSearchArea"),
+    guestSearchInput: document.getElementById("guestSearchInput"),
+    guestSearchBtn: document.getElementById("guestSearchBtn"),
+    searchResultsContainer: document.getElementById("searchResultsContainer"),
+  };
+}
+
+function initApp() {
+  const timezoneStr = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (elements.currentTimeZone) {
+    elements.currentTimeZone.textContent = `🌐 ${timezoneStr}`;
+  }
+
+  const savedUsername = localStorage.getItem("mal_username");
+  const guestMode = localStorage.getItem("mal_guest_mode") === "true";
+
+  if (savedUsername) {
+    loadUserProfileAndWatchlist(savedUsername);
+  } else if (guestMode) {
+    loadGuestDashboard();
+  } else {
+    elements.loginView?.classList.remove("hidden");
+  }
+
+  elements.malForm?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const inputVal = (
+      elements.usernameInput as HTMLInputElement | null
+    )?.value.trim();
+    if (inputVal) {
+      localStorage.removeItem("mal_guest_mode");
+      loadUserProfileAndWatchlist(inputVal);
+    }
+  });
+
+  elements.demoBtn?.addEventListener("click", () => {
+    localStorage.setItem("mal_guest_mode", "true");
+    localStorage.removeItem("mal_username");
+    loadGuestDashboard();
+  });
+
+  elements.logoutBtn?.addEventListener("click", () => {
+    localStorage.removeItem("mal_username");
+    localStorage.removeItem("mal_guest_mode");
+
+    elements.dashboardView?.classList.add("hidden");
+    elements.guestSearchArea?.classList.add("hidden");
+    elements.loginView?.classList.remove("hidden");
+
+    if (activeTimerInterval) clearInterval(activeTimerInterval);
+    animeWatchlist = [];
+  });
+
+  elements.closeModalBtn?.addEventListener("click", () => {
+    elements.detailsModal?.classList.add("hidden");
+  });
+
+  // Safely narrow elements.detailsModal using local const
+  const detailsModal = elements.detailsModal;
+  if (detailsModal) {
+    detailsModal.addEventListener("click", (e) => {
+      if (e.target === detailsModal) {
+        detailsModal.classList.add("hidden");
+      }
+    });
+  }
+
+  elements.sortSelect?.addEventListener("change", (e) => {
+    activeFilters.sort = (e.target as HTMLSelectElement).value;
+    renderWatchlist();
+  });
+
+  elements.airingFilter?.addEventListener("change", (e) => {
+    activeFilters.airingStatus = (e.target as HTMLSelectElement).value;
+    renderWatchlist();
+  });
+
+  // Wire up Guest Search Handlers
+  elements.guestSearchBtn?.addEventListener("click", executeGuestSearch);
+  elements.guestSearchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") executeGuestSearch();
+  });
+}
+
+function showLoading(text: string) {
+  if (elements.loadingText && elements.loadingOverlay) {
+    elements.loadingText.textContent = text;
+    elements.loadingOverlay.classList.remove("hidden");
+  }
+}
+
+function hideLoading() {
+  elements.loadingOverlay?.classList.add("hidden");
+}
+
+async function executeGuestSearch() {
+  const queryInput = elements.guestSearchInput as HTMLInputElement | null;
+  const container = elements.searchResultsContainer;
+  if (!queryInput || !container) return;
+
+  const query = queryInput.value.trim();
+  if (!query) return;
+
+  showLoading(`Searching AniList for "${query}"...`);
+  try {
+    const results = await searchAnimeFromAniList(query);
+    currentSearchResults = results;
+    container.innerHTML = "";
+
+    if (results.length === 0) {
+      container.innerHTML = `<div class="col-span-2 text-center text-slate-500 text-xs py-4">No matching results found</div>`;
+    } else {
+      results.forEach((show, index) => {
+        const row = document.createElement("div");
+        row.className =
+          "flex items-center justify-between p-3 bg-slate-900 border border-darkBorder rounded-xl gap-3";
+
+        const showTitle = show.title_english || show.title;
+        const poster =
+          show.images?.webp?.small_image_url ||
+          show.images?.webp?.image_url ||
+          "";
+
+        const escapedTitle = escapeHtml(show.title).replace(/'/g, "\\'");
+        const escapedStudio = escapeHtml(resolveStudioName(show)).replace(
+          /'/g,
+          "\\'",
+        );
+
+        row.innerHTML = `
+                    <div class="flex items-center gap-3 min-w-0">
+                        <img src="${escapeHtml(poster)}" class="w-8 h-11 object-cover rounded pointer-events-none" alt="Cover">
+                        <div class="min-w-0">
+                            <div class="text-xs font-bold text-white truncate leading-snug">${escapeHtml(showTitle)}</div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">${escapeHtml(show.status)} · ${show.episodes || "Unknown"} ep</div>
+                        </div>
+                    </div>
+                    <button onclick="addSearchedAnimeByIndex(${index})" class="bg-brand-500 hover:bg-brand-600 px-3.5 py-1.5 rounded-lg text-[10px] font-black transition-all flex-shrink-0 text-white">Add</button>
+                `;
+        container.appendChild(row);
+      });
+    }
+    container.classList.remove("hidden");
+  } catch (e: any) {
+    alert(`Search Error: ${e.message}`);
+  } finally {
+    hideLoading();
+  }
+}
+
+async function loadUserProfileAndWatchlist(username: string) {
+  showLoading(`Syncing with MyAnimeList for '${username}'...`);
+  try {
+    const profileData = await fetchUserProfile(username);
+    renderUserHeader({
+      username: profileData.username || username,
+      avatar: profileData.images?.webp?.image_url || "",
+      watchingCount: profileData.statistics?.anime?.watching || 0,
+    });
+
+    let malList;
+    try {
+      malList = await fetchUserWatchingList(username);
+      watchlistLoadNotice = "";
+    } catch (err: any) {
+      if (err?.code === "TEMPORARY_UNAVAILABLE") {
+        animeWatchlist = [];
+        watchlistLoadNotice = err.message;
+        localStorage.setItem("mal_username", username);
+        elements.loginView?.classList.add("hidden");
+        elements.dashboardView?.classList.remove("hidden");
+        renderWatchlist();
+        startCountdownLoop();
+        return;
+      }
+      throw err;
+    }
+
+    showLoading("Generating localized timezone calendars...");
+    const anilistScheduleMap = await fetchAniListScheduleMap(
+      malList.map((item) => item.anime?.mal_id),
+    );
+
+    const enrichedList: any[] = [];
+    malList.forEach((item) => {
+      const baseAnime = item.anime;
+      const cachedProgress = getLocalProgress(
+        baseAnime.mal_id,
+        item.episodes_watched,
+      );
+      const scheduledShow = anilistScheduleMap[baseAnime.mal_id];
+
+      let broadcast = baseAnime.broadcast || null;
+      let synopsis = baseAnime.synopsis || "";
+      let studioText = "Unknown Studio";
+      let trailerUrl = "";
+      let score = baseAnime.score || item.score || 0;
+      let genres = [];
+      let status = baseAnime.status;
+
+      if (scheduledShow) {
+        broadcast = scheduledShow.broadcast || broadcast;
+        synopsis = scheduledShow.synopsis || synopsis;
+        studioText = resolveStudioName(scheduledShow);
+        trailerUrl = scheduledShow.trailer?.url || "";
+        score = scheduledShow.score || score;
+        genres = scheduledShow.genres || [];
+        status = scheduledShow.status || status;
+      }
+
+      const normalizedStatus = normalizeAnimeStatus(status, Boolean(broadcast));
+
+      enrichedList.push({
+        mal_id: baseAnime.mal_id,
+        title: baseAnime.title,
+        title_english: baseAnime.title_english || baseAnime.title,
+        image_url:
+          baseAnime.images?.webp?.large_image_url ||
+          baseAnime.images?.webp?.image_url ||
+          "",
+        airing: normalizedStatus === "Currently Airing",
+        status: normalizedStatus,
+        episodes_total: baseAnime.episodes || scheduledShow?.episodes || 0,
+        episodes_watched_mal: item.episodes_watched,
+        episodes_watched_local: cachedProgress,
+        score: score,
+        broadcast: broadcast,
+        synopsis: synopsis,
+        studio: studioText,
+        trailer_url: trailerUrl,
+        genres: genres,
+        season: baseAnime.season
+          ? `${baseAnime.season.charAt(0).toUpperCase() + baseAnime.season.slice(1)} ${baseAnime.year || ""}`
+          : "TBA",
+        url: baseAnime.url,
+        next_airing_episode: scheduledShow?.next_airing_episode || null,
+        next_airing_at: scheduledShow?.next_airing_at || null,
+      });
+    });
+
+    animeWatchlist = enrichedList;
+    localStorage.setItem("mal_username", username);
+
+    renderUserHeader({
+      username: profileData.username || username,
+      avatar: profileData.images?.webp?.image_url || "",
+      watchingCount: enrichedList.length,
+    });
+
+    elements.loginView?.classList.add("hidden");
+    elements.guestSearchArea?.classList.add("hidden");
+    elements.dashboardView?.classList.remove("hidden");
+
+    renderWatchlist();
+    startCountdownLoop();
+  } catch (err: any) {
+    alert(`Unable to load data: ${err.message}`);
+  } finally {
+    hideLoading();
+  }
+}
+
+async function loadGuestDashboard() {
+  showLoading("Loading Guest Watchlist...");
+  try {
+    const savedList = localStorage.getItem(GUEST_WATCHLIST_KEY);
+    if (savedList) {
+      animeWatchlist = JSON.parse(savedList);
+    } else {
+      const rawSchedule = await fetchLiveWeeklySchedule();
+      animeWatchlist = rawSchedule.slice(0, 4);
+      localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+    }
+
+    renderUserHeader({
+      username: "Guest Watcher",
+      avatar: "https://placehold.co/100x100?text=Guest",
+      watchingCount: animeWatchlist.length,
+    });
+
+    elements.guestSearchArea?.classList.remove("hidden");
+    elements.loginView?.classList.add("hidden");
+    elements.dashboardView?.classList.remove("hidden");
+
+    renderWatchlist();
+    startCountdownLoop();
+  } catch (err: any) {
+    alert(`Critical Loading Error: ${err.message}`);
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderUserHeader({ username, avatar, watchingCount }: any) {
+  if (elements.userProfile) {
+    elements.userProfile.innerHTML = `
+            <img class="h-9 w-9 rounded-full ring-2 ring-brand-500 bg-slate-900 object-cover" src="${escapeHtml(avatar)}" alt="Avatar">
+            <div class="hidden sm:block">
+                <div class="text-sm font-extrabold text-white leading-none">${escapeHtml(username)}</div>
+                <div class="text-[10px] text-slate-400 mt-0.5">${watchingCount} Currently Tracking</div>
+            </div>
+        `;
+  }
+}
+
+function getReleasedEpisodes(anime: any): number {
+  const totalEpisodes = Number(anime.episodes_total) || 0;
+  const watchedFallback = Math.max(
+    Number(anime.episodes_watched_mal) || 0,
+    Number(anime.episodes_watched_local) || 0,
+    0,
+  );
+
+  if (!anime.airing) {
+    return totalEpisodes > 0 ? totalEpisodes : watchedFallback;
+  }
+
+  const nextEpisodeNumber = Number(anime.next_airing_episode) || 0;
+  if (nextEpisodeNumber > 0) {
+    const nextAiringAt = Number(anime.next_airing_at) || 0;
+    if (nextAiringAt > 0 && nextAiringAt * 1000 <= Date.now()) {
+      return nextEpisodeNumber;
+    }
+    return Math.max(nextEpisodeNumber - 1, 0);
+  }
+  return watchedFallback;
+}
+
+function getBehindEpisodes(anime: any): number {
+  const watchedEpisodes = Number(anime.episodes_watched_local) || 0;
+  const releasedEpisodes = getReleasedEpisodes(anime);
+  return Math.max(releasedEpisodes - watchedEpisodes, 0);
+}
+
+function getBehindIndicatorData(anime: any) {
+  const behindEpisodes = getBehindEpisodes(anime);
+  if (behindEpisodes <= 0) {
+    return {
+      text: "✅ Up to date",
+      className: "text-[10px] font-extrabold text-emerald-400",
+    };
+  }
+  return {
+    text: `⚠️ ${behindEpisodes} ep behind`,
+    className: "text-[10px] font-extrabold text-rose-400",
+  };
+}
+
+function updateBehindSummary(list = animeWatchlist) {
+  if (!elements.totalBehindCount) return;
+  const totalBehind = list.reduce(
+    (sum, anime) => sum + getBehindEpisodes(anime),
+    0,
+  );
+  elements.totalBehindCount.textContent = `Behind by ${totalBehind} episode${totalBehind === 1 ? "" : "s"}`;
+}
+
+function updateGuestStats() {
+  const statsBar = document.getElementById("guestStatsBar");
+  if (!statsBar) return;
+
+  const isGuest = localStorage.getItem("mal_guest_mode") === "true";
+  if (!isGuest) {
+    statsBar.classList.add("hidden");
+    return;
+  }
+
+  statsBar.classList.remove("hidden");
+
+  const trackedEl = document.getElementById("statTrackedCount");
+  const watchedEl = document.getElementById("statWatchedCount");
+  const completedEl = document.getElementById("statCompletedCount");
+
+  if (trackedEl) trackedEl.textContent = String(animeWatchlist.length);
+
+  const totalWatched = animeWatchlist.reduce(
+    (sum, a) => sum + (a.episodes_watched_local || 0),
+    0,
+  );
+  if (watchedEl) watchedEl.textContent = String(totalWatched);
+
+  const completedCount = animeWatchlist.filter((a) => {
+    return a.episodes_total > 0 && a.episodes_watched_local >= a.episodes_total;
+  }).length;
+  if (completedEl) completedEl.textContent = String(completedCount);
+}
+
+function renderCalendar() {
+  const calendarGrid = elements.calendarDaysGrid;
+  if (!calendarGrid) return;
+  calendarGrid.innerHTML = "";
+
+  const todayIndex = new Date().getDay();
+  const weekDaysOrdered = [1, 2, 3, 4, 5, 6, 0];
+
+  weekDaysOrdered.forEach((dayNum) => {
+    const dayName = DAYS_OF_WEEK[dayNum];
+    const isToday = todayIndex === dayNum;
+
+    const airingTodayAnime = animeWatchlist.filter((anime) => {
+      if (!anime.airing || !anime.broadcast || !anime.broadcast.day)
+        return false;
+      const calculatedLocalDay = getLocalAiringDay(anime.broadcast);
+      return calculatedLocalDay === dayNum;
+    });
+
+    const dayCard = document.createElement("div");
+    const bgStyles = isToday
+      ? "border-brand-500/40 bg-gradient-to-b from-brand-500/10 to-darkCard"
+      : "border-darkBorder bg-darkCard/10";
+
+    let animeRowsHtml = "";
+    if (airingTodayAnime.length === 0) {
+      animeRowsHtml = `<div class="text-[10px] text-slate-500 italic py-2">Nothing airing</div>`;
+    } else {
+      airingTodayAnime.forEach((anime) => {
+        const localTimeStr = getLocalAiringTime(anime.broadcast);
+        animeRowsHtml += `
+                    <button onclick="openAnimeDetails(${anime.mal_id})" class="w-full text-left p-2 rounded-xl bg-darkBg/60 border border-darkBorder hover:border-brand-500 hover:bg-brand-500/5 transition-all flex items-center gap-2 mt-2 group">
+                        <img src="${escapeHtml(anime.image_url)}" class="w-7 h-9 rounded object-cover flex-shrink-0" alt="Cover">
+                        <div class="min-w-0">
+                            <div class="text-[11px] font-bold text-slate-200 truncate leading-snug group-hover:text-brand-400 transition-colors">
+                                ${escapeHtml(anime.title)}
+                            </div>
+                            <div class="text-[9px] text-cyan-400 mt-0.5">⏰ ${escapeHtml(localTimeStr)}</div>
+                        </div>
+                    </button>
+                `;
+      });
+    }
+
+    dayCard.className = `p-4 rounded-2xl border ${bgStyles} flex flex-col justify-between transition-all`;
+    dayCard.innerHTML = `
+            <div>
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-extrabold uppercase tracking-wider ${isToday ? "text-brand-400" : "text-slate-400"}">${dayName.substring(0, 3)}</span>
+                    ${isToday ? `<span class="text-[9px] bg-brand-500 text-white px-2 py-0.5 rounded-full font-black uppercase">Today</span>` : ""}
+                </div>
+                <div class="mt-2">${animeRowsHtml}</div>
+            </div>
+        `;
+    calendarGrid.appendChild(dayCard);
+  });
+}
+
+function renderWatchlist() {
+  renderCalendar();
+  updateGuestStats();
+
+  const animeGrid = elements.animeGrid;
+  if (!animeGrid) return;
+
+  let filteredList = [...animeWatchlist];
+
+  if (activeFilters.airingStatus === "airing") {
+    filteredList = filteredList.filter((a) => a.airing);
+  } else if (activeFilters.airingStatus === "finished") {
+    filteredList = filteredList.filter((a) => !a.airing);
+  }
+
+  if (activeFilters.sort === "countdown") {
+    filteredList.sort((a, b) => {
+      if (!a.airing && b.airing) return 1;
+      if (a.airing && !b.airing) return -1;
+      if (!a.airing && !b.airing) return 0;
+      const aTime = getNextAiringTimestamp(a.broadcast) || Infinity;
+      const bTime = getNextAiringTimestamp(b.broadcast) || Infinity;
+      return aTime - bTime;
+    });
+  } else if (activeFilters.sort === "score") {
+    filteredList.sort((a, b) => b.score - a.score);
+  } else if (activeFilters.sort === "title") {
+    filteredList.sort((a, b) => a.title.localeCompare(b.title));
+  } else if (activeFilters.sort === "progress") {
+    filteredList.sort((a, b) => {
+      const behindDiff = getBehindEpisodes(b) - getBehindEpisodes(a);
+      if (behindDiff !== 0) return behindDiff;
+      const aTime = getNextAiringTimestamp(a.broadcast) || Infinity;
+      const bTime = getNextAiringTimestamp(b.broadcast) || Infinity;
+      return aTime - bTime;
+    });
+  }
+
+  if (elements.totalAnimeCount) {
+    elements.totalAnimeCount.textContent = `${filteredList.length} of ${animeWatchlist.length} anime matched`;
+  }
+  updateBehindSummary(filteredList);
+
+  if (filteredList.length === 0) {
+    animeGrid.innerHTML = "";
+    elements.watchlistEmptyState?.classList.remove("hidden");
+    return;
+  }
+
+  elements.watchlistEmptyState?.classList.add("hidden");
+  animeGrid.innerHTML = "";
+
+  const isGuestMode = localStorage.getItem("mal_guest_mode") === "true";
+
+  filteredList.forEach((anime) => {
+    const card = document.createElement("div");
+    card.className =
+      "flex flex-col rounded-2xl border border-darkBorder bg-darkCard/50 backdrop-blur-md overflow-hidden hover:border-brand-500/30 hover:shadow-lg transition-all duration-300 relative group";
+
+    const watched = anime.episodes_watched_local;
+    const total = anime.episodes_total;
+    const percentage = total > 0 ? Math.min((watched / total) * 100, 100) : 0;
+    const behindIndicator = getBehindIndicatorData(anime);
+
+    const hasBroadcast =
+      anime.broadcast &&
+      anime.broadcast.string &&
+      !anime.broadcast.string.toLowerCase().includes("tba");
+    const broadcastHtml = hasBroadcast
+      ? `<div class="text-[11px] text-cyan-400 font-bold mt-1.5 flex items-center gap-1">📅 <span>${escapeHtml(anime.broadcast.string)}</span></div>`
+      : "";
+
+    const totalText = total > 0 ? `${total} ep` : "? ep";
+
+    let middleBoxHtml = "";
+    if (anime.airing && anime.broadcast?.day) {
+      middleBoxHtml = `
+                <div class="mt-3 p-3 bg-darkBg/60 border border-darkBorder rounded-xl min-h-[3.75rem] flex flex-col justify-center">
+                    <span class="text-[9px] text-slate-500 uppercase tracking-wider font-extrabold">Next Episode</span>
+                    <div id="countdown-timer-${anime.mal_id}" class="text-xs font-black text-white tracking-wide mt-0.5">Calculating...</div>
+                </div>
+            `;
+    } else {
+      const genresHtml =
+        anime.genres && anime.genres.length > 0
+          ? `<div class="flex flex-wrap gap-1 mt-1">${anime.genres
+              .slice(0, 2)
+              .map(
+                (g: any) =>
+                  `<span class="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md font-semibold">${escapeHtml(g.name || g)}</span>`,
+              )
+              .join("")}</div>`
+          : "";
+      const studioText =
+        anime.studio && anime.studio !== "Unknown Studio"
+          ? escapeHtml(anime.studio)
+          : "TBA";
+
+      middleBoxHtml = `
+                <div class="mt-3 p-3 bg-darkBg/30 border border-darkBorder/60 rounded-xl min-h-[3.75rem] flex flex-col justify-center">
+                    <span class="text-[9px] text-slate-500 uppercase tracking-wider font-extrabold">Studio</span>
+                    <div class="text-xs font-extrabold text-slate-300 truncate">🎬 ${studioText}</div>
+                    ${genresHtml}
+                </div>
+            `;
+    }
+
+    const removeButtonHtml = isGuestMode
+      ? `<button onclick="removeAnime(${anime.mal_id})" class="absolute top-3 right-3 p-2 bg-slate-950/80 hover:bg-rose-600 hover:text-white text-rose-400 rounded-md transition-all z-10" title="Remove from Watchlist">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+               </button>`
+      : "";
+
+    // CONDITIONAL CONTROLS LAYOUT: Interactive only for Guest Mode, plain text for MAL Sync
+    let progressControlsHtml = "";
+    if (isGuestMode) {
+      progressControlsHtml = `
+                <div class="flex items-center justify-between gap-2 bg-slate-900/40 p-2 rounded-xl border border-darkBorder/40">
+                    <div class="text-xs font-bold text-slate-400 px-1">
+                        Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}
+                    </div>
+                    <div class="flex gap-1.5">
+                        <button onclick="decrementProgress(${anime.mal_id}, ${total})" class="w-8 h-8 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 rounded-lg font-black text-xs transition-all flex items-center justify-center shadow-md" title="Decrease Progress">
+                            <span>-1</span>
+                        </button>
+                        <button onclick="incrementProgress(${anime.mal_id}, ${total})" class="w-8 h-8 bg-brand-500 hover:bg-brand-600 active:scale-95 text-white rounded-lg font-black text-xs transition-all flex items-center justify-center shadow-md shadow-brand-500/10" title="Increase Progress">
+                            <span>+1</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+    } else {
+      progressControlsHtml = `
+                <div class="flex items-center justify-between text-xs font-bold text-slate-400 px-1">
+                    <span>Watched: <span id="progress-text-${anime.mal_id}" class="text-white font-extrabold">${watched}</span> / ${totalText}</span>
+                </div>
+            `;
+    }
+
+    card.innerHTML = `
+            <div class="h-40 relative overflow-hidden bg-slate-950 cursor-pointer">
+                <div onclick="openAnimeDetails(${anime.mal_id})" class="absolute inset-0">
+                    <img src="${escapeHtml(anime.image_url)}" alt="${escapeHtml(anime.title)}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                    <div class="absolute inset-0 bg-gradient-to-t from-darkCard via-transparent to-transparent"></div>
+                </div>
+                ${removeButtonHtml}
+                <div class="absolute top-3 left-3 flex flex-wrap gap-1.5 pointer-events-none">
+                    <span class="text-[9px] font-black px-2.5 py-1 rounded-md tracking-wider uppercase ${anime.airing ? "bg-emerald-500 text-white" : "bg-slate-700 text-slate-300"}">
+                        ${escapeHtml(anime.airing ? "AIRING" : anime.status)}
+                    </span>
+                    ${
+                      anime.score
+                        ? `
+                        <span class="text-[9px] font-black px-2.5 py-1 rounded-md tracking-wider bg-yellow-500 text-slate-950">
+                            ⭐ ${anime.score.toFixed(1)}
+                        </span>
+                    `
+                        : ""
+                    }
+                </div>
+            </div>
+            <div class="p-4 flex-1 flex flex-col justify-between">
+                <div>
+                    <h3 onclick="openAnimeDetails(${anime.mal_id})" class="font-extrabold text-sm text-slate-100 line-clamp-1 hover:text-brand-400 cursor-pointer" title="${escapeHtml(anime.title)}">${escapeHtml(anime.title)}</h3>
+                    ${broadcastHtml}
+                    ${middleBoxHtml}
+                </div>
+                <div class="mt-3 border-t border-darkBorder/40 pt-3 space-y-2">
+                    ${progressControlsHtml}
+                    <div class="w-full bg-slate-900 rounded-full h-1 border border-darkBorder overflow-hidden">
+                        <div id="progress-bar-${anime.mal_id}" class="bg-gradient-to-r from-brand-500 to-cyan-500 h-1 rounded-full" style="width: ${percentage}%"></div>
+                    </div>
+                    <div id="behind-text-${anime.mal_id}" class="${behindIndicator.className}">${behindIndicator.text}</div>
+                </div>
+            </div>
+        `;
+    animeGrid.appendChild(card);
+  });
+  updateAllTimers();
+}
+
+function startCountdownLoop() {
+  if (activeTimerInterval) clearInterval(activeTimerInterval);
+  activeTimerInterval = setInterval(updateAllTimers, 1000);
+}
+
+function updateAllTimers() {
+  animeWatchlist.forEach((anime) => {
+    if (!anime.airing || !anime.broadcast || !anime.broadcast.day) return;
+    const timerEl = document.getElementById(`countdown-timer-${anime.mal_id}`);
+    if (!timerEl) return;
+
+    const nextAiringEpoch = getNextAiringTimestamp(anime.broadcast);
+    if (!nextAiringEpoch) {
+      timerEl.textContent = "Schedule Pending...";
+      return;
+    }
+
+    const diff = nextAiringEpoch - Date.now();
+    if (diff <= 0) {
+      timerEl.innerHTML = `<span class="text-emerald-400">Airing Now</span>`;
+    } else {
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+      const minutes = Math.floor((diff / 1000 / 60) % 60);
+      const seconds = Math.floor((diff / 1000) % 60);
+
+      let formatted = "";
+      if (days > 0) formatted += `${days}d `;
+      formatted += `${hours.toString().padStart(2, "0")}h ${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
+      timerEl.textContent = formatted;
+    }
+  });
+}
+
+export function incrementProgress(malId: number, totalEpisodes: number) {
+  const anime = animeWatchlist.find((a) => a.mal_id === malId);
+  if (!anime) return;
+
+  let currentWatched = getLocalProgress(malId, anime.episodes_watched_mal);
+  currentWatched += 1;
+
+  if (totalEpisodes > 0 && currentWatched > totalEpisodes) {
+    currentWatched = 0;
+  }
+
+  anime.episodes_watched_local = currentWatched;
+  setLocalProgress(malId, currentWatched);
+
+  const isGuest = localStorage.getItem("mal_guest_mode") === "true";
+  if (isGuest) {
+    localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+  }
+
+  const textEl = document.getElementById(`progress-text-${malId}`);
+  const barEl = document.getElementById(`progress-bar-${malId}`);
+
+  if (textEl) textEl.textContent = String(currentWatched);
+  if (barEl) {
+    const percentage =
+      totalEpisodes > 0
+        ? Math.min((currentWatched / totalEpisodes) * 100, 100)
+        : 0;
+    barEl.style.width = `${percentage}%`;
+  }
+
+  const indicatorEl = document.getElementById(`behind-text-${malId}`);
+  if (indicatorEl) {
+    const indicator = getBehindIndicatorData(anime);
+    indicatorEl.className = indicator.className;
+    indicatorEl.textContent = indicator.text;
+  }
+  updateBehindSummary();
+  updateGuestStats();
+  showMiniToast(`Watched ep ${currentWatched}`);
+}
+
+export function decrementProgress(malId: number, totalEpisodes: number) {
+  const anime = animeWatchlist.find((a) => a.mal_id === malId);
+  if (!anime) return;
+
+  let currentWatched = getLocalProgress(malId, anime.episodes_watched_mal);
+  currentWatched -= 1;
+
+  if (currentWatched < 0) {
+    currentWatched = 0;
+  }
+
+  anime.episodes_watched_local = currentWatched;
+  setLocalProgress(malId, currentWatched);
+
+  const isGuest = localStorage.getItem("mal_guest_mode") === "true";
+  if (isGuest) {
+    localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+  }
+
+  const textEl = document.getElementById(`progress-text-${malId}`);
+  const barEl = document.getElementById(`progress-bar-${malId}`);
+
+  if (textEl) textEl.textContent = String(currentWatched);
+  if (barEl) {
+    const percentage =
+      totalEpisodes > 0
+        ? Math.min((currentWatched / totalEpisodes) * 100, 100)
+        : 0;
+    barEl.style.width = `${percentage}%`;
+  }
+
+  const indicatorEl = document.getElementById(`behind-text-${malId}`);
+  if (indicatorEl) {
+    const indicator = getBehindIndicatorData(anime);
+    indicatorEl.className = indicator.className;
+    indicatorEl.textContent = indicator.text;
+  }
+  updateBehindSummary();
+  updateGuestStats();
+  showMiniToast(`Watched ep ${currentWatched}`);
+}
+
+export function addSearchedAnimeByIndex(index: number) {
+  const show = currentSearchResults[index];
+  if (!show) return;
+
+  const alreadyExists = animeWatchlist.some((a) => a.mal_id === show.mal_id);
+  if (alreadyExists) {
+    showMiniToast("Anime is already in your watchlist!");
+    return;
+  }
+
+  const newAnime = {
+    mal_id: show.mal_id,
+    title: show.title,
+    title_english: show.title,
+    image_url:
+      show.images?.webp?.large_image_url ||
+      show.images?.webp?.image_url ||
+      "https://placehold.co/300x450?text=Poster",
+    airing: show.status === "RELEASING" || show.status === "Airing",
+    status: normalizeAnimeStatus(show.status, true),
+    episodes_total: show.episodes || 0,
+    episodes_watched_mal: 0,
+    episodes_watched_local: 0,
+    score: show.score || 0,
+    broadcast: show.broadcast || null,
+    synopsis: show.synopsis || "No description available.",
+    studio: resolveStudioName(show),
+    trailer_url: show.trailer?.url || "",
+    genres: show.genres || [],
+    season: show.season
+      ? `${show.season.charAt(0).toUpperCase() + show.season.slice(1)} ${show.year || ""}`
+      : "Added",
+    url: show.url || `https://myanimelist.net/anime/${show.mal_id}`,
+    next_airing_episode: show.next_airing_episode || null, // ADDED
+    next_airing_at: show.next_airing_at || null, // ADDED
+  };
+
+  animeWatchlist.unshift(newAnime);
+  localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+
+  if (elements.guestSearchInput)
+    (elements.guestSearchInput as HTMLInputElement).value = "";
+  if (elements.searchResultsContainer) {
+    elements.searchResultsContainer.innerHTML = "";
+    elements.searchResultsContainer.classList.add("hidden");
+  }
+
+  renderUserHeader({
+    username: "Guest Watcher",
+    avatar: "https://placehold.co/100x100?text=Guest",
+    watchingCount: animeWatchlist.length,
+  });
+
+  renderWatchlist();
+  showMiniToast(`Added "${newAnime.title}"!`);
+}
+
+export function removeAnime(malId: number) {
+  animeWatchlist = animeWatchlist.filter((a) => a.mal_id !== malId);
+  localStorage.setItem(GUEST_WATCHLIST_KEY, JSON.stringify(animeWatchlist));
+
+  renderUserHeader({
+    username: "Guest Watcher",
+    avatar: "https://placehold.co/100x100?text=Guest",
+    watchingCount: animeWatchlist.length,
+  });
+
+  renderWatchlist();
+  showMiniToast("Anime removed from watchlist.");
+}
+
+function showMiniToast(message: string) {
+  const toast = document.createElement("div");
+  toast.className =
+    "fixed bottom-5 right-5 bg-gradient-to-r from-brand-600 to-indigo-600 text-white font-semibold text-xs py-3 px-5 rounded-xl shadow-2xl z-50 border border-brand-500/30 transition-all duration-300 transform translate-y-10 opacity-0";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.remove("translate-y-10", "opacity-0");
+  }, 10);
+
+  setTimeout(() => {
+    toast.classList.add("translate-y-10", "opacity-0");
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
+
+export function openAnimeDetails(malId: number) {
+  const anime = animeWatchlist.find((a) => a.mal_id === malId);
+  if (!anime) return;
+
+  if (elements.modalPoster) {
+    (elements.modalPoster as HTMLImageElement).src = anime.image_url;
+  }
+  if (elements.modalTitle) {
+    elements.modalTitle.textContent = anime.title;
+  }
+  if (elements.modalTitleEnglish) {
+    elements.modalTitleEnglish.textContent =
+      anime.title_english !== anime.title ? anime.title_english : "";
+  }
+  if (elements.modalScore) {
+    elements.modalScore.textContent = anime.score
+      ? anime.score.toFixed(2)
+      : "N/A";
+  }
+  if (elements.modalBroadcast) {
+    elements.modalBroadcast.textContent = anime.broadcast?.string || "TBA";
+  }
+  if (elements.modalStudio) {
+    elements.modalStudio.textContent = anime.studio;
+  }
+  if (elements.modalEpisodes) {
+    elements.modalEpisodes.textContent = `${anime.episodes_total || "∞"} episodes`;
+  }
+  if (elements.modalSeason) {
+    elements.modalSeason.textContent = anime.season;
+  }
+  if (elements.modalSynopsis) {
+    elements.modalSynopsis.textContent =
+      anime.synopsis || "No synopsis available.";
+  }
+
+  if (elements.modalStatusBadge) {
+    elements.modalStatusBadge.textContent = anime.status;
+    if (anime.airing) {
+      elements.modalStatusBadge.className =
+        "inline-block text-[9px] font-black px-2.5 py-1 rounded-full mb-3 bg-emerald-500 text-white";
+    } else {
+      elements.modalStatusBadge.className =
+        "inline-block text-[9px] font-black px-2.5 py-1 rounded-full mb-3 bg-slate-700 text-slate-300";
+    }
+  }
+
+  if (elements.modalGenres) {
+    elements.modalGenres.innerHTML = "";
+    if (anime.genres && anime.genres.length > 0) {
+      anime.genres.forEach((genre: any) => {
+        const span = document.createElement("span");
+        span.className =
+          "text-[10px] bg-slate-800 text-slate-300 px-2 py-1 rounded-lg font-semibold border border-darkBorder";
+        span.textContent = genre.name || genre;
+        elements.modalGenres?.appendChild(span);
+      });
+    } else {
+      elements.modalGenres.innerHTML = `<span class="text-xs text-slate-500">No genres listed</span>`;
+    }
+  }
+
+  elements.detailsModal?.classList.remove("hidden");
+}
+
+(window as any).openAnimeDetails = openAnimeDetails;
+(window as any).incrementProgress = incrementProgress;
+(window as any).decrementProgress = decrementProgress;
+(window as any).addSearchedAnimeByIndex = addSearchedAnimeByIndex;
+(window as any).removeAnime = removeAnime;
+</file>
+
+</files>

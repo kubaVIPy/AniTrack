@@ -965,7 +965,25 @@ export function openAnimeDetails(malId: number) {
       elements.modalGenres.innerHTML = `<span class="text-xs text-slate-500">No genres listed</span>`;
     }
   }
+  if (elements.modalTrailerBtn) {
+    const btn = elements.modalTrailerBtn as HTMLAnchorElement;
+    if (anime.trailer_url) {
+      btn.href = anime.trailer_url;
+      btn.style.display = "inline-flex";
+    } else {
+      btn.style.display = "none";
+    }
+  }
 
+  if (elements.modalMalLink) {
+    const link = elements.modalMalLink as HTMLAnchorElement;
+    if (anime.url) {
+      link.href = anime.url;
+      link.style.display = "inline-flex";
+    } else {
+      link.style.display = "none";
+    }
+  }
   elements.detailsModal?.classList.remove("hidden");
 }
 

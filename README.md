@@ -1,4 +1,4 @@
-# 🎌 AniTrack - Live Anime Tracker
+# AniTrack - Live Anime Tracker
 
 A sleek, live broadcast tracker and localized calendar for your current anime watchlist. Automatically sync with your MyAnimeList account or build a custom dashboard using Guest Mode!
 

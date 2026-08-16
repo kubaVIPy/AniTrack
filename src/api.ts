@@ -237,22 +237,65 @@ export async function fetchAniListMediaByMalId(malId: number) {
 
 export async function fetchAniListScheduleMap(malIds: number[]) {
   const scheduleMap: Record<number, any> = {};
-  const uniqueIds = [...new Set(malIds)].filter(Boolean);
+  const uniqueIds = [...new Set(malIds)].filter((id) => id > 0);
 
-  const mediaList = await Promise.all(
-    uniqueIds.map(async (malId) => {
-      try {
-        return await fetchAniListMediaByMalId(malId);
-      } catch (error) {
-        console.warn(`AniList lookup failed for MAL id ${malId}.`, error);
-        return null;
+  if (uniqueIds.length === 0) return scheduleMap;
+
+  const mediaList: any[] = [];
+  const chunkSize = 40; // Safely batch 40 anime into a SINGLE request
+
+  for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+    const chunk = uniqueIds.slice(i, i + chunkSize);
+
+    try {
+      const response = await fetchGraphqlWithRetry(
+        "https://graphql.anilist.co",
+        {
+          query: `
+            query ($idMalIn: [Int]) {
+                Page(perPage: 50) {
+                    media(idMal_in: $idMalIn, type: ANIME) {
+                        id
+                        idMal
+                        status
+                        episodes
+                        nextAiringEpisode {
+                            airingAt
+                            episode
+                            timeUntilAiring
+                        }
+                        title {
+                            romaji
+                            english
+                            native
+                        }
+                        siteUrl
+                    }
+                }
+            }
+          `,
+          variables: { idMalIn: chunk },
+        },
+        { retries: 3, retryDelayMs: 2000 },
+      );
+
+      if (response.ok) {
+        const json = await response.json();
+        const fetchedMedia = json.data?.Page?.media || [];
+        mediaList.push(...fetchedMedia);
       }
-    }),
-  );
+    } catch (error) {
+      console.warn("AniList batch lookup failed.", error);
+    }
+
+    // 1-second delay between chunks just to be ultra-safe
+    if (i + chunkSize < uniqueIds.length) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
 
   mediaList.forEach((media) => {
     if (!media) return;
-
     const airingEpisode = media.nextAiringEpisode || null;
     scheduleMap[media.idMal] = {
       mal_id: media.idMal,
@@ -622,9 +665,9 @@ export async function searchAnimeFromAniList(query: string): Promise<any[]> {
       status: item.status,
       episodes: item.episodes,
       score: 0,
-      broadcast: broadcast, // FIXED: dynamically mapped
-      next_airing_episode: airingEpisode?.episode || null, // FIXED: mapped
-      next_airing_at: airingEpisode?.airingAt || null, // FIXED: mapped
+      broadcast: broadcast,
+      next_airing_episode: airingEpisode?.episode || null,
+      next_airing_at: airingEpisode?.airingAt || null,
       synopsis: item.description,
       studios: item.studios?.nodes,
       trailer: {
